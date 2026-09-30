@@ -1,0 +1,31 @@
+{
+  "id": "house_001",
+  "name": "House",
+  "description": "Two-room house: living room with kitchen in the upper part, bedroom in the lower part, front door to the south.",
+  "width": 10,
+  "height": 15,
+  "map": [
+    "##########",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#........#",
+    "####.#####",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#####D####"
+  ],
+  "objects": [
+    { "id": "sofa", "type": "furniture", "name": "the sofa", "x": 2, "y": 2, "blocks": true },
+    { "id": "table", "type": "furniture", "name": "the kitchen table", "x": 6, "y": 3, "blocks": true },
+    { "id": "fridge", "type": "appliance", "name": "the refrigerator", "x": 8, "y": 1, "blocks": true },
+    { "id": "bed", "type": "furniture", "name": "the bed", "x": 2, "y": 9, "blocks": true },
+    { "id": "wardrobe", "type": "furniture", "name": "the wardrobe", "x": 8, "y": 8, "blocks": true }
+  ]
+}

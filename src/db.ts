@@ -1,0 +1,55 @@
+import Database from "better-sqlite3";
+
+export type Db = Database.Database;
+
+// Every schema change is a new migration at the end; an applied one is never edited.
+const MIGRATIONS: string[] = [
+  `CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+   CREATE TABLE entities (
+     id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
+     zone_id TEXT NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL,
+     data TEXT NOT NULL DEFAULT '{}'
+   );
+   CREATE TABLE events (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, zone_id TEXT NOT NULL,
+     type TEXT NOT NULL, actor_id TEXT, x INTEGER, y INTEGER, data TEXT NOT NULL DEFAULT '{}'
+   );
+   CREATE TABLE witnesses (
+     event_id INTEGER NOT NULL REFERENCES events(id), character_id TEXT NOT NULL,
+     PRIMARY KEY (event_id, character_id)
+   );
+   CREATE TABLE llm_calls (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, role TEXT NOT NULL,
+     model TEXT NOT NULL, tokens_input INTEGER, tokens_output INTEGER, cost REAL,
+     request TEXT NOT NULL, response TEXT NOT NULL
+   );`,
+];
+
+export function openDb(path: string): Db {
+  const db = new Database(path);
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  db.exec("CREATE TABLE IF NOT EXISTS migrations (n INTEGER PRIMARY KEY)");
+  const done = new Set(
+    (db.prepare("SELECT n FROM migrations").all() as { n: number }[]).map((r) => r.n),
+  );
+  MIGRATIONS.forEach((sql, i) => {
+    const n = i + 1;
+    if (done.has(n)) return;
+    db.transaction(() => {
+      db.exec(sql);
+      db.prepare("INSERT INTO migrations (n) VALUES (?)").run(n);
+    })();
+  });
+  return db;
+}
+
+export function getMeta(db: Db, key: string): string | undefined {
+  return (db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined)?.value;
+}
+
+export function setMeta(db: Db, key: string, value: string): void {
+  db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(key, value);
+}

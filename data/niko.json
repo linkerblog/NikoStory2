@@ -1,0 +1,17 @@
+{
+  "name": "Niko",
+  "start_zone": "house_001",
+  "x": 4,
+  "y": 10,
+  "data": {
+    "last_name": "Unit Zero",
+    "class": "Mythos (Eldritch)",
+    "species": "wolf hybrid (ears, tail and fangs)",
+    "height_cm": 165,
+    "weight_kg": 118,
+    "personality": "introverted, clumsy, relaxed, affectionate, very calm",
+    "ether": 3,
+    "ether_max": 100,
+    "ether_regen": 1
+  }
+}
