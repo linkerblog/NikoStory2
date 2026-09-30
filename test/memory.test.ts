@@ -29,7 +29,7 @@ test("the memories migration applies on an older schema and keeps existing rows"
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2]);
+  assert.deepEqual(migrations, [1, 2, 3]);
   assert.equal((db2.prepare("SELECT COUNT(*) c FROM memories").get() as { c: number }).c, 0);
   assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
   db2.close();
@@ -159,4 +159,30 @@ test("the rules load from data and keep the provisional defaults", () => {
   assert.equal(rules.recall.promptMaxChars, 1200);
   assert.equal(rules.recall.halfLifeTicks, 50);
   assert.ok(rules.importance.talk >= rules.importance.move);
+});
+
+test("a talked event creates memories only for its witnesses (Dev-002 regression)", async () => {
+  const { engine, db } = create();
+  db.prepare("UPDATE entities SET x = 5, y = 2 WHERE id = 'niko'").run(); // next to Marta
+  await engine.start();
+  await engine.takeTurn({ type: "talk", target: "marta" });
+  for (let i = 0; i < 4; i++) await engine.takeTurn({ type: "reply", target: "marta", choice: "ask" });
+
+  const event = db.prepare("SELECT id FROM events WHERE type = 'talked' ORDER BY id DESC LIMIT 1").get() as { id: number };
+  assert.ok(event);
+  const holders = (
+    db.prepare("SELECT character_id FROM memories WHERE event_id = ? ORDER BY character_id").all(event.id) as
+      { character_id: string }[]
+  ).map((r) => r.character_id);
+  const witnesses = (
+    db.prepare("SELECT character_id FROM witnesses WHERE event_id = ? ORDER BY character_id").all(event.id) as
+      { character_id: string }[]
+  ).map((r) => r.character_id);
+  assert.ok(witnesses.includes("niko"));
+  assert.deepEqual(holders, witnesses);
+
+  const memory = db.prepare("SELECT importance, text FROM memories WHERE event_id = ? AND character_id = 'niko'")
+    .get(event.id) as { importance: number; text: string };
+  assert.equal(memory.importance, 7);
+  assert.match(memory.text, /talked with Marta/);
 });

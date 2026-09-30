@@ -27,5 +27,9 @@
     { "id": "fridge", "type": "appliance", "name": "the refrigerator", "x": 8, "y": 1, "blocks": true },
     { "id": "bed", "type": "furniture", "name": "the bed", "x": 2, "y": 9, "blocks": true },
     { "id": "wardrobe", "type": "furniture", "name": "the wardrobe", "x": 8, "y": 8, "blocks": true }
+  ],
+  "rooms": [
+    { "id": "living_room", "name": "Living Room", "x": 1, "y": 1, "w": 8, "h": 5 },
+    { "id": "bedroom", "name": "Bedroom", "x": 1, "y": 7, "w": 8, "h": 7 }
   ]
 }

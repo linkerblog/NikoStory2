@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGame } from "../src/game.js";
 import { canSee } from "../src/engine.js";
+import { openDb } from "../src/db.js";
 import { OfflineNarrator, type Narrator } from "../src/narrator.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
@@ -44,12 +45,28 @@ test("perception respects walls", () => {
 });
 
 test("same seed, same world", async () => {
-  const a = create(":memory:", 42), b = create(":memory:", 42), c = create(":memory:", 7);
-  for (const g of [a, b, c]) {
+  const a = create(":memory:", 42), b = create(":memory:", 42);
+  for (const g of [a, b]) {
     await g.engine.start();
     for (let i = 0; i < 40; i++) await g.engine.takeTurn({ type: "wait" });
   }
   assert.deepEqual(a.engine.positions(), b.engine.positions());
+});
+
+test("the wander fallback stays seed-dependent", async () => {
+  const block = (g: ReturnType<typeof create>) => {
+    for (const id of ["marta", "ivy"]) {
+      const data = JSON.parse((g.db.prepare("SELECT data FROM entities WHERE id = ?").get(id) as { data: string }).data);
+      data.agenda.target = "nowhere";
+      g.db.prepare("UPDATE entities SET data = ? WHERE id = ?").run(JSON.stringify(data), id);
+    }
+  };
+  const a = create(":memory:", 42), c = create(":memory:", 7);
+  for (const g of [a, c]) {
+    block(g);
+    await g.engine.start();
+    for (let i = 0; i < 40; i++) await g.engine.takeTurn({ type: "wait" });
+  }
   assert.notDeepEqual(a.engine.positions(), c.engine.positions());
 });
 
@@ -91,4 +108,22 @@ test("the engine discards options invented by the LLM", async () => {
   const texts = engine.state().options.map((o) => o.text);
   assert.ok(!texts.includes("Fly"));
   assert.ok(texts.includes("Wait a bit"));
+});
+
+test("the stakes migration applies on a database from the previous version", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "niko-mig3-")), "game.db");
+  const db1 = openDb(path);
+  db1.prepare("INSERT INTO settings (key, value) VALUES ('probe', 'kept')").run();
+  db1.exec("DROP TABLE agenda_state; DROP TABLE conversations; DROP TABLE facts_known");
+  db1.prepare("DELETE FROM migrations WHERE n = 3").run();
+  db1.close();
+
+  const db2 = openDb(path);
+  const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
+  assert.deepEqual(migrations, [1, 2, 3]);
+  const tables = (db2.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
+    .map((r) => r.name);
+  for (const t of ["agenda_state", "conversations", "facts_known"]) assert.ok(tables.includes(t));
+  assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
+  db2.close();
 });

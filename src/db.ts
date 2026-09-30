@@ -35,6 +35,26 @@ const MIGRATIONS: string[] = [
      UNIQUE (character_id, event_id)
    );
    CREATE INDEX idx_memories_character_tick ON memories (character_id, tick DESC);`,
+  `CREATE TABLE agenda_state (
+     character_id TEXT PRIMARY KEY,
+     goal_id      TEXT NOT NULL,
+     status       TEXT NOT NULL CHECK (status IN ('active','arrived','done','blocked')),
+     since_tick   INTEGER NOT NULL
+   );
+   CREATE TABLE conversations (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     npc_id       TEXT    NOT NULL,
+     goal_id      TEXT    NOT NULL,
+     status       TEXT    NOT NULL CHECK (status IN ('open','closed')),
+     beat         INTEGER NOT NULL DEFAULT 0,
+     started_tick INTEGER NOT NULL
+   );
+   CREATE TABLE facts_known (
+     character_id TEXT    NOT NULL,
+     fact_id      TEXT    NOT NULL,
+     tick         INTEGER NOT NULL,
+     PRIMARY KEY (character_id, fact_id)
+   );`,
 ];
 
 export function openDb(path: string): Db {

@@ -17,7 +17,7 @@ export interface MemoryRules {
 }
 
 export const DEFAULT_MEMORY_RULES: MemoryRules = {
-  importance: { move: 1, wait: 1, appears: 4, examine: 3, talk: 6 },
+  importance: { move: 1, wait: 1, appears: 4, examine: 3, talk: 6, talked: 7 },
   defaultImportance: 2,
   recall: {
     recencyWeight: 0.4,
@@ -108,6 +108,12 @@ export function memoryFromEvent(
       const target = event.data.target as string | undefined;
       if (target) participants.add(target);
       text = `${actor} talked to ${name(target)}.`;
+      break;
+    }
+    case "talked": {
+      const target = event.data.target as string | undefined;
+      if (target) participants.add(target);
+      text = `${actor} talked with ${name(target)}.`;
       break;
     }
     case "examine":

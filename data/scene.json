@@ -1,0 +1,15 @@
+{
+  "question": "Why is Niko in this house?",
+  "facts": [
+    {
+      "id": "fact_marta_warning",
+      "text": "Marta came to warn Niko that someone is looking for him.",
+      "revealed_by": "marta_warn"
+    },
+    {
+      "id": "fact_ivy_letter",
+      "text": "Ivy found a letter addressed to Niko on the kitchen table.",
+      "revealed_by": "ivy_letter"
+    }
+  ]
+}

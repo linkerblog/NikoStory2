@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs";
 import { getMeta, setMeta, type Db } from "./db.js";
 
 export interface Obj { id: string; type: string; name: string; x: number; y: number; blocks: boolean }
+export interface Room { id: string; name: string; x: number; y: number; w: number; h: number }
 export interface Zone {
   id: string; name: string; description: string;
   width: number; height: number;
   map: string[]; // '#' wall, '.' floor, 'D' exit to a zone not yet generated
   objects: Obj[];
+  rooms: Room[];
 }
 export interface Ent {
   id: string; type: "player" | "npc"; name: string;
@@ -21,7 +23,13 @@ export function loadZone(dataDir: string): Zone {
   if (z.map.length !== z.height || z.map.some((row) => row.length !== z.width)) {
     throw new Error(`Zone ${z.id} does not match its declared width/height`);
   }
+  z.rooms = z.rooms ?? [];
   return z;
+}
+
+export function roomAt(zone: Zone, x: number, y: number): string {
+  const r = (zone.rooms ?? []).find((room) => x >= room.x && y >= room.y && x < room.x + room.w && y < room.y + room.h);
+  return r?.name ?? zone.name;
 }
 
 export function seed(db: Db, dataDir: string, seedValue: number): void {

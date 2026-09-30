@@ -4,7 +4,8 @@
     "wait": 1,
     "appears": 4,
     "examine": 3,
-    "talk": 6
+    "talk": 6,
+    "talked": 7
   },
   "defaultImportance": 2,
   "recall": {

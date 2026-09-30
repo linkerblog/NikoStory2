@@ -1,6 +1,22 @@
 [
   { "id": "marta", "name": "Marta", "x": 6, "y": 2,
-    "data": { "personality": "serious and direct", "routine": { "type": "wander", "prob": 0.5 } } },
+    "data": {
+      "personality": "serious and direct",
+      "routine": { "type": "wander", "prob": 0.5 },
+      "agenda": {
+        "goal_id": "marta_warn", "kind": "approach", "target": "niko",
+        "want": "Marta came to warn Niko about something and will not leave until she does.",
+        "reveals": "fact_marta_warning"
+      }
+    } },
   { "id": "ivy", "name": "Ivy", "x": 3, "y": 8,
-    "data": { "personality": "curious and talkative", "routine": { "type": "wander", "prob": 0.5 } } }
+    "data": {
+      "personality": "curious and talkative",
+      "routine": { "type": "wander", "prob": 0.5 },
+      "agenda": {
+        "goal_id": "ivy_letter", "kind": "visit", "target": "table",
+        "want": "Ivy wants to show Niko the letter she found on the kitchen table.",
+        "reveals": "fact_ivy_letter"
+      }
+    } }
 ]

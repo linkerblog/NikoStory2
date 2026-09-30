@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { openDb, type Db } from "../src/db.js";
 import { loadMemoryRules } from "../src/memory.js";
-import { OpenRouterNarrator, parseNarration, type Context } from "../src/narrator.js";
+import { OpenRouterNarrator, parseNarration, hasTileCount, jaccard, narrationRejected, type Context } from "../src/narrator.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 
@@ -128,4 +128,107 @@ test("the memory block is empty when the character has no memories", async () =>
   }
   const user = JSON.parse(captured!.messages[1].content) as { niko_memories: string[] };
   assert.deepEqual(user.niko_memories, []);
+});
+
+test("narrationRejected flags tile counts and too-similar narrations", () => {
+  assert.equal(hasTileCount("Marta is seven tiles north."), true);
+  assert.equal(hasTileCount("Marta is 3 m away."), true);
+  assert.equal(hasTileCount("Marta stands beside Niko."), false);
+  assert.ok(jaccard("Niko waits in the room", "Niko waits in the room") >= 0.99);
+  assert.equal(narrationRejected("Marta is two tiles east.", [], 0.6), true);
+  assert.equal(narrationRejected("Marta speaks quickly.", ["Marta speaks quickly and firmly."], 0.6), true);
+  assert.equal(narrationRejected("Ivy opens the door.", ["Marta speaks quickly."], 0.6), false);
+});
+
+// A stub narrator that answers with queued raw contents and counts the calls.
+function stubNarrator(contents: string[]) {
+  const db = { prepare: () => ({ get: () => ({ t: 0 }), run: () => {} }) } as unknown as Db;
+  let calls = 0;
+  const original = globalThis.fetch;
+  (globalThis as { fetch: unknown }).fetch = async () => {
+    const content = contents[Math.min(calls, contents.length - 1)];
+    calls++;
+    return new Response(JSON.stringify({ choices: [{ message: { content } }], usage: {} }), { status: 200 });
+  };
+  return {
+    narrator: new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 }),
+    calls: () => calls,
+    restore: () => { (globalThis as { fetch: unknown }).fetch = original; },
+  };
+}
+
+test("a rejected narration is retried once and the retry is used", async () => {
+  const s = stubNarrator([
+    '{"narration":"Marta is seven tiles north.","options":[]}',
+    '{"narration":"Marta stands beside Niko.","options":[]}',
+  ]);
+  try {
+    const out = await s.narrator.narrate(ctx);
+    assert.equal(out.text, "Marta stands beside Niko.");
+    assert.equal(s.calls(), 2);
+  } finally {
+    s.restore();
+  }
+});
+
+test("a second rejection accepts the offline narration", async () => {
+  const s = stubNarrator(['{"narration":"Marta is seven tiles north.","options":[]}']);
+  try {
+    const out = await s.narrator.narrate(ctx);
+    assert.equal(out.text, "Something happens."); // the offline narrator echoes the events
+    assert.equal(s.calls(), 2);
+  } finally {
+    s.restore();
+  }
+});
+
+test("the prompt carries room, last move, past narrations and only the known facts", async () => {
+  let captured: { messages: { content: string }[] } | undefined;
+  const original = globalThis.fetch;
+  (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
+    captured = JSON.parse(init.body);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
+      { status: 200 },
+    );
+  };
+  try {
+    const db = openDb(":memory:");
+    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
+    await narrator.narrate({
+      ...ctx, tick: 5,
+      place: { name: "House", description: "", room: "Bedroom" },
+      lastMove: "north",
+      recentNarrations: ["Marta looked at Niko.", "Niko stood still."],
+      scene: { question: "Why is Niko here?", knownFacts: ["Niko found a letter."] },
+    });
+  } finally {
+    (globalThis as { fetch: unknown }).fetch = original;
+  }
+  const payload = JSON.parse(captured!.messages[1].content) as {
+    place: { room: string };
+    last_move: string;
+    previous_narrations: string[];
+    scene: { question: string; knownFacts: string[] };
+  };
+  assert.equal(payload.place.room, "Bedroom");
+  assert.equal(payload.last_move, "north");
+  assert.deepEqual(payload.previous_narrations, ["Marta looked at Niko.", "Niko stood still."]);
+  assert.deepEqual(payload.scene.knownFacts, ["Niko found a letter."]);
+  assert.ok(!JSON.stringify(payload).includes("a secret Niko does not know"));
+});
+
+test("the offline narrator plays a conversation with reply options", async () => {
+  const db = openDb(":memory:");
+  const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0 });
+  const out = await narrator.narrate({
+    ...ctx, conversation: { npc: "Marta", beat: 0, maxBeats: 4, want: "Marta has a warning." },
+    actions: [
+      { id: "reply:marta:ask", label: "Ask Marta a question" },
+      { id: "reply:marta:press", label: "Press Marta for details" },
+      { id: "leave:marta", label: "Leave the conversation" },
+    ],
+  });
+  assert.match(out.text, /Marta/);
+  assert.equal(out.options.length, 3);
 });

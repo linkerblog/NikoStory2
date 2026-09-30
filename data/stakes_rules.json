@@ -1,0 +1,6 @@
+{
+  "maxBeats": 4,
+  "proximity": { "adjacent": 1, "near": 3 },
+  "overlapThreshold": 0.6,
+  "promptNarrations": 3
+}
