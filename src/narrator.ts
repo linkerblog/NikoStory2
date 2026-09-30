@@ -1,4 +1,5 @@
 import type { Db } from "./db.js";
+import { recall, DEFAULT_MEMORY_RULES, type MemoryQuery, type MemoryRules } from "./memory.js";
 
 export interface Option { id: string; text: string }
 export interface Narration { text: string; options: Option[] }
@@ -9,6 +10,7 @@ export interface Context {
   visible: { name: string; location: string; personality: string }[];
   events: string[];
   actions: { id: string; label: string }[];
+  memory?: MemoryQuery;
 }
 export interface Narrator { narrate(c: Context): Promise<Narration> }
 
@@ -54,10 +56,25 @@ export function parseNarration(content: string, finishReason?: string): Narratio
 
 export class OpenRouterNarrator implements Narrator {
   private fallback = new OfflineNarrator();
-  constructor(private db: Db, private cfg: LlmConfig) {}
+  constructor(private db: Db, private cfg: LlmConfig, private rules: MemoryRules = DEFAULT_MEMORY_RULES) {}
 
   private spent(): number {
     return (this.db.prepare("SELECT COALESCE(SUM(cost), 0) AS t FROM llm_calls").get() as { t: number }).t;
+  }
+
+  // Highest-ranked memories survive the budget: lowest-ranked are dropped first, then the rest are
+  // printed oldest-first so the model reads them chronologically.
+  private memories(q: MemoryQuery): string[] {
+    const { promptMaxItems, promptMaxChars } = this.rules.recall;
+    const line = (m: { tick: number; text: string }) => `t${m.tick}: ${m.text}`;
+    const selected = recall(this.db, q.characterId, q, promptMaxItems, this.rules);
+    while (
+      selected.length > 0 &&
+      (selected.length > promptMaxItems || selected.reduce((n, m) => n + line(m).length, 0) > promptMaxChars)
+    ) {
+      selected.pop();
+    }
+    return selected.sort((a, b) => a.tick - b.tick || a.id - b.id).map(line);
   }
 
   private post(body: object): Promise<Response> {
@@ -84,6 +101,7 @@ export class OpenRouterNarrator implements Narrator {
         role: "user",
         content: JSON.stringify({
           niko_sheet: c.sheet, place: c.place, visible_characters: c.visible,
+          niko_memories: c.memory ? this.memories(c.memory) : [],
           events_this_turn: c.events, available_actions: c.actions,
         }),
       },

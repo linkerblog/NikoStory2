@@ -1,0 +1,18 @@
+{
+  "importance": {
+    "move": 1,
+    "wait": 1,
+    "appears": 4,
+    "examine": 3,
+    "talk": 6
+  },
+  "defaultImportance": 2,
+  "recall": {
+    "recencyWeight": 0.4,
+    "importanceWeight": 0.4,
+    "relevanceWeight": 0.2,
+    "halfLifeTicks": 50,
+    "promptMaxItems": 8,
+    "promptMaxChars": 1200
+  }
+}

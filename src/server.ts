@@ -17,13 +17,13 @@ if (existsSync(envPath)) {
 }
 
 const env = process.env;
-const { engine } = createGame(join(root, env.DB_PATH ?? "game.db"), join(root, "data"), Number(env.SEED ?? 1337), (db): Narrator => {
+const { engine } = createGame(join(root, env.DB_PATH ?? "game.db"), join(root, "data"), Number(env.SEED ?? 1337), (db, rules): Narrator => {
   if (env.OPENROUTER_API_KEY && env.NARRATOR_MODEL) {
     console.log(`Narrator: OpenRouter (${env.NARRATOR_MODEL})`);
     return new OpenRouterNarrator(db, {
       apiKey: env.OPENROUTER_API_KEY, model: env.NARRATOR_MODEL,
       language: env.NARRATION_LANGUAGE ?? "English", spendCapUsd: Number(env.SPEND_CAP_USD ?? 0.5),
-    });
+    }, rules);
   }
   console.log("Narrator: offline (set OPENROUTER_API_KEY and NARRATOR_MODEL in .env to use the LLM)");
   return new OfflineNarrator();

@@ -23,6 +23,18 @@ const MIGRATIONS: string[] = [
      model TEXT NOT NULL, tokens_input INTEGER, tokens_output INTEGER, cost REAL,
      request TEXT NOT NULL, response TEXT NOT NULL
    );`,
+  `CREATE TABLE memories (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     character_id TEXT NOT NULL,
+     event_id INTEGER NOT NULL REFERENCES events(id),
+     tick INTEGER NOT NULL,
+     zone_id TEXT NOT NULL,
+     text TEXT NOT NULL,
+     importance INTEGER NOT NULL CHECK (importance BETWEEN 1 AND 10),
+     participants TEXT NOT NULL,
+     UNIQUE (character_id, event_id)
+   );
+   CREATE INDEX idx_memories_character_tick ON memories (character_id, tick DESC);`,
 ];
 
 export function openDb(path: string): Db {

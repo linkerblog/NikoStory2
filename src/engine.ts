@@ -2,6 +2,7 @@ import { getMeta, setMeta, type Db } from "./db.js";
 import { rngFor } from "./rng.js";
 import type { Ent, Zone } from "./world.js";
 import type { Narrator, Option } from "./narrator.js";
+import { memoryFromEvent, type MemoryEvent, type MemoryRules, DEFAULT_MEMORY_RULES } from "./memory.js";
 
 export type Dir = "N" | "S" | "E" | "W";
 export type Action =
@@ -47,7 +48,12 @@ function location(origin: Point, a: Point): string {
 }
 
 export class Engine {
-  constructor(private db: Db, readonly zone: Zone, private narrator: Narrator) {}
+  constructor(
+    private db: Db,
+    readonly zone: Zone,
+    private narrator: Narrator,
+    private rules: MemoryRules = DEFAULT_MEMORY_RULES,
+  ) {}
 
   private tick(): number { return Number(getMeta(this.db, "tick")); }
   private seed(): number { return Number(getMeta(this.db, "seed")); }
@@ -70,15 +76,34 @@ export class Engine {
     this.db.prepare("UPDATE entities SET x = ?, y = ? WHERE id = ?").run(x, y, e.id);
   }
 
-  // The event is born with its witnesses: only those who could see it "know" it.
+  // The event is born with its witnesses: only those who could see it "know" it. The event, its
+  // witnesses and one memory per witness commit together, so a memory can never outlive its event.
   private record(type: string, x: number, y: number, actor: string | null, data: object, withWitnesses: boolean): void {
-    const id = Number(
-      this.db.prepare("INSERT INTO events (tick, zone_id, type, actor_id, x, y, data) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(this.tick(), this.zone.id, type, actor, x, y, JSON.stringify(data)).lastInsertRowid,
-    );
-    if (!withWitnesses) return;
-    const ins = this.db.prepare("INSERT INTO witnesses (event_id, character_id) VALUES (?, ?)");
-    for (const e of this.ents()) if (canSee(this.zone, e, { x, y })) ins.run(id, e.id);
+    const tick = this.tick();
+    const ents = this.ents();
+    const names: Record<string, string> = {};
+    for (const e of ents) names[e.id] = e.name;
+    for (const o of this.zone.objects) names[o.id] = o.name;
+    const witnesses = withWitnesses
+      ? ents.filter((e) => canSee(this.zone, e, { x, y })).map((e) => e.id)
+      : [];
+    const base: Omit<MemoryEvent, "id"> = { tick, zone_id: this.zone.id, type, actor_id: actor, x, y, data, names, witnesses };
+    this.db.transaction(() => {
+      const id = Number(
+        this.db.prepare("INSERT INTO events (tick, zone_id, type, actor_id, x, y, data) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .run(tick, this.zone.id, type, actor, x, y, JSON.stringify(data)).lastInsertRowid,
+      );
+      const insWitness = this.db.prepare("INSERT INTO witnesses (event_id, character_id) VALUES (?, ?)");
+      for (const w of witnesses) insWitness.run(id, w);
+      const insMemory = this.db.prepare(
+        `INSERT OR IGNORE INTO memories (character_id, event_id, tick, zone_id, text, importance, participants)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const w of witnesses) {
+        const m = memoryFromEvent({ ...base, id }, w, this.rules);
+        insMemory.run(m.character_id, m.event_id, m.tick, m.zone_id, m.text, m.importance, JSON.stringify(m.participants));
+      }
+    })();
   }
 
   private availableActions(niko: Ent, ents: Ent[]): AvailableAction[] {
@@ -105,15 +130,20 @@ export class Engine {
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
     const actions = this.availableActions(niko, ents);
+    const visible = this.visibleActors(niko, ents);
     const n = await this.narrator.narrate({
       tick: this.tick(),
       sheet: { name: niko.name, ...niko.data },
       place: { name: this.zone.name, description: this.zone.description },
-      visible: this.visibleActors(niko, ents).map((e) => ({
+      visible: visible.map((e) => ({
         name: e.name, location: location(niko, e), personality: String(e.data.personality ?? ""),
       })),
       events,
       actions: actions.map((a) => ({ id: a.id, label: a.label })),
+      memory: {
+        characterId: niko.id, tick: this.tick(), zoneId: this.zone.id,
+        presentCharacters: visible.map((e) => e.id),
+      },
     });
     // The LLM proposes; the engine decides: only options that are real actions survive.
     const valid = n.options.filter((o) => actions.some((a) => a.id === o.id)).slice(0, 3);

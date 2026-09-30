@@ -1,4 +1,4 @@
-# NikoStory2 — prototype v0.0.1
+# NikoStory2 — prototype v0.1.0
 
 A turn-based 2D game on a grid (1 tile = 1 m). Everything runs on your computer and the world
 lives in a single SQLite file. The browser draws the state and sends commands; it never simulates.
@@ -34,6 +34,7 @@ narrator is used without breaking the game.
 | `src/db.ts` | SQLite open, numbered migrations and `settings` helpers |
 | `src/world.ts` | Loads `data/house_zone.json` and seeds Niko and the NPCs |
 | `src/engine.ts` | Actions, tick clock, Ether, perception, narration and `state()` |
+| `src/memory.ts` | Template memories per witnessed event and deterministic recall |
 | `src/narrator.ts` | `OfflineNarrator`, `OpenRouterNarrator` and JSON parsing |
 | `src/rng.ts` | Stateless seeded RNG (`rngFor`) |
 | `src/game.ts` | Wires database, world and engine together |
@@ -54,13 +55,15 @@ npm test          # tests only
 - SQLite with numbered migrations and a stateless seeded RNG (same seed = same world).
 - One hand-made zone (10x15 house), movable Niko, tick clock, Ether with regeneration.
 - Perception by line of sight; every event is stored with its witnesses.
+- Character memory: one template-based memory per witness of each event, ranked by recency,
+  importance and relevance, with Niko's recalled memories fed to the narrator prompt.
 - Two NPCs with a wander routine, subject to the same movement rules as Niko.
 - A narrator with JSON output and three options; the engine discards any option that is not a real
   action (the LLM proposes, the engine decides).
 
 ## Not implemented yet
 
-- Character memory: memories, beliefs, relationships, embeddings and retrieval.
+- Beliefs, relationships, embeddings and semantic retrieval of memories.
 - NPC decisions made with the LLM and zone generation. The south door (`D`) is the trigger.
 - Niko's abilities as actions with an Ether cost.
 
