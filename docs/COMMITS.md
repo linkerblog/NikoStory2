@@ -1,7 +1,7 @@
-# EtherBound — Commit messages
+# NikoStory2 — Commit messages
 
-How every commit message in this repo is written, by any agent or by hand. It replaces the
-Kilo Code commit prompt. The rules below can be pasted as-is into any agent as its prompt.
+How every commit message in this repo is written, by any agent or by hand. The rules below can be
+pasted as-is into any agent as its commit prompt.
 
 ## 1. Format
 
@@ -33,10 +33,9 @@ The first line is the bare version, not bold, so `git log --oneline` reads `100f
   - **Y (Minor):** new features or backward-compatible upgrades. Reset Z to 0.
   - **Z (Fix):** bug fixes, small tweaks, refactors, docs, config.
 - If no previous version exists, use `v0.0.1`.
-- **The new version is written to `docs/utils/VERSION.md`** ("Overall project version") in the
-  same commit; it is the single source of truth for the project version.
-- Module versions are separate: every module touched by the commit is bumped by `0.0.1` in the
-  same `VERSION.md` (`AGENTS.md`, "Versions").
+- Keep the `version` field in `package.json` in sync with the version line. There is no separate
+  version file; the latest `v` commit is the project version.
+- There is no module-level versioning.
 
 ## 3. Tag rules
 
@@ -57,9 +56,10 @@ once, in bold, with a blank line before it.
 
 - One change per bullet, starting with `- `.
 - Scope in square brackets, then an imperative verb (Add, Fix, Update, Remove...):
-  `- [sim.engine] Fix stack merge on drop`.
-- **Scopes are module names from `docs/utils/VERSION.md`** (`sim.engine`, `game.render`,
-  `bitcanvas`, `tooling`...), plus `docs` and `tests` for files outside every module.
+  `- [engine] Fix NPC branch on a blocked tile`.
+- **Scopes are the source module names** — `db`, `world`, `engine`, `rng`, `narrator`, `game`,
+  `server` — plus `client` (`public/`), `data` (`data/`), and `docs`, `tests` and `tooling` for
+  files outside every module.
 - Use `inline code` for file names, functions, variables and commands.
 - At most ~72 characters per bullet.
 - Only describe changes present in the diff. Never invent changes.
@@ -73,15 +73,14 @@ once, in bold, with a blank line before it.
 ## 6. TL;DR rules
 
 - A single line, at most 100 characters, describing the overall purpose of the commit.
-- When the commit implements a doc, name it: `Dev-012`, `Fix10`, `Infra01`.
+- When the commit delivers a named feature or task, name it: `Objects`, `Zone generation`.
 
 ## 7. Procedure
 
-1. One commit per doc (`Dev-XYZ`, `FixNN`, `InfraNN`). A doc too big for one commit is split
-   into smaller docs, not into partial commits.
+1. One commit per task. A task too big for one commit is split into smaller tasks, not into
+   partial commits.
 2. Read the staged diff (`git diff --staged`), never the working tree alone.
-3. Compute the version [Sec. 2], update the overall line and the module bumps in
-   `docs/utils/VERSION.md`, and stage it.
+3. Compute the version [Sec. 2], keep `package.json` in sync, and stage it.
 4. Write the message to a file and commit with `git commit -F <file>`, so bold and blank lines
    survive the shell.
 5. Never `--no-verify`, never amend a pushed commit, unless the user asks for it.
@@ -89,21 +88,21 @@ once, in bold, with a blank line before it.
 ## 8. Example
 
 ```text
-v0.8.0
+v0.1.0
 
 **[Feature]**
-- [sim.engine] Add `take`, `drop`, `put`, `open`, `close` handlers
-- [sim.db] Add `object` table and migration `0005_object`
-- [game.render] Render objects on tiles with one facing
+- [engine] Add `examine` action for nearby objects
+- [db] Add `object` table and migration `0002_objects`
+- [client] Render objects on tiles with one facing
 
 **[Bugfix]**
-- [bitcanvas] Remove the `folderName` redeclaration in `gamesync.js`
+- [narrator] Fix JSON extraction from fenced responses
 
 **[Docs]**
-- [docs] Move `Dev-012.md` to `docs/done/`
+- [docs] Update `README.md` with the new action list
 
 **[TL;DR]**
-Dev-012: objects become data, with handling ops and object rendering.
+Objects become data, with `examine` and object rendering.
 ```
 
 ---
@@ -111,6 +110,5 @@ Dev-012: objects become data, with handling ops and object rendering.
 ## TL;DR
 
 First line `vX.Y.Z` (bare), then bold tags in fixed order with `- [scope] change` bullets, then a
-one-line `**[TL;DR]**`. Bump one semver level from the latest `v` commit and write it to
-`VERSION.md` in the same commit. Scopes are `VERSION.md` module names. One commit per doc,
-committed with `git commit -F`.
+one-line `**[TL;DR]**`. Bump one semver level from the latest `v` commit and keep `package.json`
+in sync in the same commit. Scopes are the source module names. Committed with `git commit -F`.
