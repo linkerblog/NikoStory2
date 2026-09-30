@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { openDb, type Db } from "../src/db.js";
 import { loadMemoryRules } from "../src/memory.js";
-import { OpenRouterNarrator, parseNarration, hasTileCount, jaccard, narrationRejected, type Context } from "../src/narrator.js";
+import { OfflineNarrator, OpenRouterNarrator, parseNarration, hasTileCount, jaccard, narrationRejected, type Context } from "../src/narrator.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 
@@ -231,4 +231,51 @@ test("the offline narrator plays a conversation with reply options", async () =>
   });
   assert.match(out.text, /Marta/);
   assert.equal(out.options.length, 3);
+});
+
+test("the offline narrator has a line for every fall beat and both impacts", async () => {
+  const narrator = new OfflineNarrator();
+  for (const altitude of ["high above the clouds", "through the clouds", "above the rooftops"]) {
+    const out = await narrator.narrate({ ...ctx, arrival: { phase: "fall", altitude, beat: 0, beats: 3 } });
+    assert.ok(out.text.length > 0);
+    assert.equal(hasTileCount(out.text), false);
+  }
+  for (const impact of ["soft", "hard"] as const) {
+    const out = await narrator.narrate({
+      ...ctx, arrival: { phase: "play", altitude: "above the rooftops", beat: 3, beats: 3, impact, choices: ["steer"] },
+    });
+    assert.ok(out.text.length > 0);
+    assert.equal(hasTileCount(out.text), false);
+  }
+});
+
+test("the LLM payload carries the world facts and the arrival block", async () => {
+  let captured: { messages: { content: string }[] } | undefined;
+  const original = globalThis.fetch;
+  (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
+    captured = JSON.parse(init.body);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
+      { status: 200 },
+    );
+  };
+  try {
+    const db = openDb(":memory:");
+    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
+    await narrator.narrate({
+      ...ctx,
+      world: { year: 2030, country: "United States", facts: ["Hybrids are common."], style: "short" },
+      arrival: { phase: "fall", altitude: "through the clouds", beat: 1, beats: 3 },
+    });
+  } finally {
+    (globalThis as { fetch: unknown }).fetch = original;
+  }
+  const payload = JSON.parse(captured!.messages[1].content) as {
+    world: { country: string; facts: string[] };
+    arrival: { altitude: string; beat: number };
+  };
+  assert.equal(payload.world.country, "United States");
+  assert.deepEqual(payload.world.facts, ["Hybrids are common."]);
+  assert.equal(payload.arrival.altitude, "through the clouds");
+  assert.equal(payload.arrival.beat, 1);
 });

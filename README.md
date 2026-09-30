@@ -1,4 +1,4 @@
-# NikoStory2 — prototype v0.2.0
+# NikoStory2 — prototype v0.3.0
 
 A turn-based 2D game on a grid (1 tile = 1 m). Everything runs on your computer and the world
 lives in a single SQLite file. The browser draws the state and sends commands; it never simulates.
@@ -16,8 +16,9 @@ npm start
 ```
 
 On Windows you can also double-click `LAUNCHER.bat`: it installs on the first run and starts the
-game. Open http://127.0.0.1:3000. Move: arrows or WASD. Wait: space. Options: keys 1-3. To start
-from scratch, delete `game.db`.
+game. Open http://127.0.0.1:3000. A new game opens with a short fall from the sky: three beats, each
+with a choice to steer, brace or let go. Then move with the arrows or WASD. Wait: space. Options:
+keys 1-3. To start from scratch, delete `game.db`.
 
 ## Using the LLM
 
@@ -33,8 +34,8 @@ offline narrator is used without breaking the game.
 | Path | Contents |
 |---|---|
 | `src/db.ts` | SQLite open, numbered migrations and `settings` helpers |
-| `src/world.ts` | Loads `data/house_zone.json` and seeds Niko and the NPCs |
-| `src/engine.ts` | Actions, tick clock, Ether, perception, agendas, conversations, narration and `state()` |
+| `src/world.ts` | Loads the zone, world and opening data and seeds Niko and the NPCs |
+| `src/engine.ts` | Actions, the opening fall, tick clock, Ether, perception, agendas, conversations, narration and `state()` |
 | `src/agenda.ts` | Deterministic goals and BFS pathing for NPCs |
 | `src/stakes.ts` | Scene hook, proximity/direction helpers and the stakes rules |
 | `src/memory.ts` | Template memories per witnessed event and deterministic recall |
@@ -43,7 +44,7 @@ offline narrator is used without breaking the game.
 | `src/game.ts` | Wires database, world and engine together |
 | `src/server.ts` | Minimal `.env` loader and HTTP server (one turn at a time) |
 | `public/index.html` | Canvas client: draws state and sends commands |
-| `data/` | Zone, rooms, scene, Niko and NPC data as JSON |
+| `data/` | Zone, rooms, scene, world facts, opening, Niko and NPC data as JSON |
 | `test/` | `node:test` suites |
 
 ## Tests
@@ -56,6 +57,11 @@ npm test          # tests only
 ## What is implemented
 
 - SQLite with numbered migrations and a stateless seeded RNG (same seed = same world).
+- A scripted three-beat fall opens a new game: each beat offers steer, brace (2 Ether) or let go,
+  the fall does not advance the world, and the landing is deterministic and lands inside the house.
+  The landing is stored as a high-importance `arrives` event seen only by its witnesses.
+- The narrator receives the world facts (`data/world.json`) and Niko's origin so the prose matches
+  the setting; the opening works with the offline narrator too.
 - One hand-made zone (10x15 house) with named rooms, movable Niko, tick clock, Ether with
   regeneration.
 - Perception by line of sight; every event is stored with its witnesses.
@@ -75,12 +81,16 @@ npm test          # tests only
 - Beliefs, relationships, embeddings and semantic retrieval of memories.
 - NPC decisions made with the LLM and NPC-to-NPC conversations.
 - Zone generation. The south door (`D`) is the trigger.
-- Niko's abilities as actions with an Ether cost.
+- Niko's abilities as general actions with an Ether cost; only the opening's `brace` exists.
 
 ## Assumptions to confirm
 
 - `weight_kg: 118` in `data/niko.json` comes from the "260 lb" reference; adjust it.
-- Initial Ether 3, max 100 and regeneration 1 per tick are provisional values.
+- Initial Ether 3, max 100 and regeneration 1 per tick are provisional values; the `brace` cost of
+  2 in `data/opening.json` is provisional so bracing is affordable exactly once at the start.
+- The world facts in `data/world.json` and the opening lore in `data/niko.json` (`origin`, `core`)
+  come from a brainstorming summary; confirm them against the original session before relying on
+  them.
 - The stakes values in `data/stakes_rules.json` (four conversation beats, proximity 1/3, the 0.6
   overlap threshold) and the scene hook in `data/scene.json` are provisional.
 - The client uses plain HTTP (no WebSocket): for a turn-based game it is enough and easier to debug.

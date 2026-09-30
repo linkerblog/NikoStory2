@@ -1,0 +1,9 @@
+{
+  "beats": [
+    { "altitude": "high above the clouds" },
+    { "altitude": "through the clouds" },
+    { "altitude": "above the rooftops" }
+  ],
+  "abilities": { "brace": { "ether_cost": 2 } },
+  "landing": { "steer_room": "living_room" }
+}

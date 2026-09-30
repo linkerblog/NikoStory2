@@ -10,8 +10,13 @@ import { openDb } from "../src/db.js";
 import { OfflineNarrator, type Narrator } from "../src/narrator.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
-const create = (path = ":memory:", seed = 1337, narrator: Narrator = new OfflineNarrator()) =>
-  createGame(path, DATA, seed, () => narrator);
+// These suites cover the world after the opening, so they mark the save as past the fall the same
+// way a v0.2.0 database without a `phase` does. The opening itself is covered by `opening.test.ts`.
+const create = (path = ":memory:", seed = 1337, narrator: Narrator = new OfflineNarrator()) => {
+  const g = createGame(path, DATA, seed, () => narrator);
+  g.db.prepare("UPDATE settings SET value = 'play' WHERE key = 'phase'").run();
+  return g;
+};
 
 test("Niko does not walk through walls and an invalid move does not spend a turn", async () => {
   const { engine } = create();

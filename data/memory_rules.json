@@ -5,7 +5,8 @@
     "appears": 4,
     "examine": 3,
     "talk": 6,
-    "talked": 7
+    "talked": 7,
+    "arrives": 9
   },
   "defaultImportance": 2,
   "recall": {

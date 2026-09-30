@@ -12,7 +12,12 @@ import {
 } from "../src/memory.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
-const create = (path = ":memory:", seed = 1337) => createGame(path, DATA, seed, () => new OfflineNarrator());
+// Skips the opening: a legacy save without a `phase` plays as `play`. The fall is in `opening.test.ts`.
+const create = (path = ":memory:", seed = 1337) => {
+  const g = createGame(path, DATA, seed, () => new OfflineNarrator());
+  g.db.prepare("UPDATE settings SET value = 'play' WHERE key = 'phase'").run();
+  return g;
+};
 
 const dump = (db: Db) =>
   db.prepare(

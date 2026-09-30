@@ -1,11 +1,21 @@
 import type { Db } from "./db.js";
 import { recall, DEFAULT_MEMORY_RULES, type MemoryQuery, type MemoryRules } from "./memory.js";
 import { DEFAULT_STAKES_RULES, type StakesRules } from "./stakes.js";
+import type { WorldFacts } from "./world.js";
 
 export interface Option { id: string; text: string }
 export interface Narration { text: string; options: Option[] }
 export interface VisibleActor { name: string; proximity: string; direction: string; personality: string }
 export interface ConversationContext { npc: string; beat: number; maxBeats: number; want: string }
+// The opening: `impact` is only set on the landing beat; `beat`/`beats` drive the fall beats.
+export interface ArrivalContext {
+  phase: "fall" | "play";
+  altitude: string;
+  beat: number;
+  beats: number;
+  impact?: "soft" | "hard";
+  choices?: string[];
+}
 export interface Context {
   tick: number;
   sheet: Record<string, unknown>;
@@ -18,8 +28,23 @@ export interface Context {
   scene?: { question: string; knownFacts: string[] };
   conversation?: ConversationContext | null;
   memory?: MemoryQuery;
+  world?: WorldFacts;
+  arrival?: ArrivalContext;
 }
 export interface Narrator { narrate(c: Context): Promise<Narration> }
+
+// The fall has no map and no NPCs to describe, so the offline narrator has its own lines: one per
+// beat (keyed by altitude) and one per impact. None of them states a distance.
+const FALL_LINES: Record<string, string> = {
+  "high above the clouds": "Niko falls through cold air, high above the clouds.",
+  "through the clouds": "The clouds tear past Niko as he drops through them.",
+  "above the rooftops": "Rooftops rush up toward Niko, close enough to graze.",
+};
+
+const LANDING_LINES: Record<"soft" | "hard", string> = {
+  soft: "Niko hits the ground and rolls; the Ether Core takes the worst of it.",
+  hard: "Niko slams into the floor and the world goes white.",
+};
 
 // No LLM: templates. Useful for testing the engine with no cost and no network, and as the fallback
 // when the model fails or answers with something the engine rejects.
@@ -34,6 +59,12 @@ export class OfflineNarrator implements Narrator {
           : beat === 2
             ? `${npc} adds one more detail and watches Niko.`
             : `${npc} finishes and waits for an answer.`;
+      return { text, options: c.actions.slice(0, 3).map((a) => ({ id: a.id, text: a.label })) };
+    }
+    if (c.arrival) {
+      const text = c.arrival.impact
+        ? LANDING_LINES[c.arrival.impact]
+        : FALL_LINES[c.arrival.altitude] ?? `Niko falls, ${c.arrival.altitude}.`;
       return { text, options: c.actions.slice(0, 3).map((a) => ({ id: a.id, text: a.label })) };
     }
     return {
@@ -54,6 +85,7 @@ Rules:
 - End on pressure, a question or a visible choice.
 - Give up to 3 options that differ in intent.
 - Do not decide for Niko: tell what happens and what he perceives. Do not invent characters or objects that are not in the situation.
+- The world facts in the situation are true; do not contradict them and do not invent new ones.
 Respond ONLY with JSON: {"narration": string, "options": [{"id": string, "text": string}]}. Each "id" must be exactly one of available_actions.`;
 
 const RETRY_HINT =
@@ -152,6 +184,8 @@ export class OpenRouterNarrator implements Narrator {
     return {
       niko_sheet: c.sheet,
       place: c.place,
+      world: c.world ?? null,
+      arrival: c.arrival ?? null,
       last_move: c.lastMove ?? null,
       visible_characters: c.visible,
       scene: c.scene ?? null,

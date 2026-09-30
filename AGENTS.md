@@ -11,9 +11,10 @@ localhost. The world lives in one SQLite file; the browser draws the state and s
 Narration is optional and comes from an LLM through OpenRouter, falling back to an offline
 template narrator with no network and no cost.
 
-Current scope (prototype v0.0.1): one hand-made house zone, Niko, two NPCs with a wander routine,
-a tick clock, Ether with regeneration, line-of-sight perception and events stored with their
-witnesses. What is and is not implemented is listed in `README.md`.
+Current scope (prototype v0.3.0): one hand-made house zone, a scripted three-beat fall that opens a
+new game, Niko, two NPCs with data-driven agendas, a tick clock, Ether with regeneration,
+line-of-sight perception and events stored with their witnesses. What is and is not implemented is
+listed in `README.md`.
 
 ## Architecture rules (do not break)
 
@@ -63,9 +64,10 @@ witnesses. What is and is not implemented is listed in `README.md`.
 
 ## Not implemented yet
 
-- Character memory: memories, beliefs, relationships, embeddings and retrieval.
+- Beliefs, relationships, embeddings and semantic retrieval of memories (template memories with
+  ranked recall are implemented).
 - NPC decisions made by the LLM.
 - Zone generation. The south door (`D`) is the trigger and currently only prints a message.
-- Niko's abilities as actions with an Ether cost.
+- Niko's abilities as general actions with an Ether cost; only the opening's `brace` exists.
 - Adult ops: no sexual action exists yet. When one is added it must be adults-only and require
   consent from every party as op preconditions in code; Niko consents only if the player chooses so.

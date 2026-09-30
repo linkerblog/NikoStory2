@@ -7,8 +7,12 @@ import type { Db } from "../src/db.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 
-const create = (narrator: Narrator = new OfflineNarrator()) =>
-  createGame(":memory:", DATA, 1337, () => narrator);
+// Skips the opening: a legacy save without a `phase` plays as `play`. The fall is in `opening.test.ts`.
+const create = (narrator: Narrator = new OfflineNarrator()) => {
+  const g = createGame(":memory:", DATA, 1337, () => narrator);
+  g.db.prepare("UPDATE settings SET value = 'play' WHERE key = 'phase'").run();
+  return g;
+};
 
 // Niko at (5,2) is next to Marta at (6,2), so the first `talk` has a valid target.
 const setup = async (narrator: Narrator = new OfflineNarrator()) => {

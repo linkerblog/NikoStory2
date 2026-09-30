@@ -1,9 +1,9 @@
 {
-  "question": "Why is Niko in this house?",
+  "question": "Why did Niko fall into this world?",
   "facts": [
     {
       "id": "fact_marta_warning",
-      "text": "Marta came to warn Niko that someone is looking for him.",
+      "text": "Marta saw a light fall from the sky and came to warn Niko that people will come looking for it.",
       "revealed_by": "marta_warn"
     },
     {

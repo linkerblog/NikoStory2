@@ -62,7 +62,17 @@ function token(x, y, color, letter) {
   cx.fillText(letter, x * C + C / 2, y * C + C / 2 + 1);
 }
 
-function render() {
+function drawSky() {
+  cv.width = S.zone.width * C;
+  cv.height = Math.round(S.zone.height * C / 2);
+  const g = cx.createLinearGradient(0, 0, 0, cv.height);
+  g.addColorStop(0, "#171d38"); g.addColorStop(1, "#46558c");
+  cx.fillStyle = g; cx.fillRect(0, 0, cv.width, cv.height);
+  cx.fillStyle = "#e8e6f0"; cx.font = "18px system-ui"; cx.textAlign = "center"; cx.textBaseline = "middle";
+  cx.fillText(S.fall.altitude, cv.width / 2, cv.height / 2);
+}
+
+function drawMap() {
   const z = S.zone;
   cv.width = z.width * C; cv.height = z.height * C;
   for (let y = 0; y < z.height; y++) for (let x = 0; x < z.width; x++) {
@@ -76,8 +86,14 @@ function render() {
   }
   for (const n of S.npcs) token(n.x, n.y, "#f0a45b", n.name[0]);
   token(S.niko.x, S.niko.y, "#c9b8ff", "N");
+}
 
-  $("hud").textContent = `${z.name} · turn ${S.tick} · Ether ${S.niko.ether}/${S.niko.ether_max}`;
+function render() {
+  if (S.phase === "fall") { drawSky(); $("hud").textContent = `Falling · ${S.fall.altitude}`; }
+  else {
+    drawMap();
+    $("hud").textContent = `${S.zone.name} · turn ${S.tick} · Ether ${S.niko.ether}/${S.niko.ether_max}`;
+  }
   $("log").innerHTML = S.log.map((r) =>
     `<p><span class="t">turn ${r.tick}</span><br>${r.text.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</p>`).join("");
   $("log").scrollTop = $("log").scrollHeight;

@@ -1,20 +1,24 @@
 import { getMeta, setMeta, type Db } from "./db.js";
 import { rngFor } from "./rng.js";
-import { roomAt, type Ent, type Zone } from "./world.js";
-import type { Narrator, Option } from "./narrator.js";
+import {
+  roomAt, DEFAULT_OPENING, DEFAULT_WORLD, type Ent, type Opening, type WorldFacts, type Zone,
+} from "./world.js";
+import type { ArrivalContext, Narrator, Option } from "./narrator.js";
 import { memoryFromEvent, type MemoryEvent, type MemoryRules, DEFAULT_MEMORY_RULES } from "./memory.js";
 import { bfsStep, deltaDir, goalPoint, reached, type Agenda } from "./agenda.js";
 import { DEFAULT_STAKES_RULES, chebyshev, directionWord, proximityLabel, type Scene, type StakesRules } from "./stakes.js";
 
 export type Dir = "N" | "S" | "E" | "W";
 export type ReplyChoice = "ask" | "reassure" | "press";
+export type FallChoice = "steer" | "brace" | "let_go";
 export type Action =
   | { type: "move"; dir: Dir }
   | { type: "wait" }
   | { type: "talk"; target: string }
   | { type: "reply"; target: string; choice: ReplyChoice }
   | { type: "leave"; target: string }
-  | { type: "examine"; target: string };
+  | { type: "examine"; target: string }
+  | { type: "fall"; choice: FallChoice };
 export interface AvailableAction { id: string; label: string; action: Action }
 
 interface Conversation {
@@ -50,6 +54,9 @@ export function canSee(z: Zone, a: Point, b: Point): boolean {
 const near = (a: Point, b: Point) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 1;
 
 export class Engine {
+  // Set when the opening lands; drives the one landing narration and then clears.
+  private pendingImpact: "soft" | "hard" | null = null;
+
   constructor(
     private db: Db,
     readonly zone: Zone,
@@ -57,10 +64,28 @@ export class Engine {
     private rules: MemoryRules = DEFAULT_MEMORY_RULES,
     private stakes: StakesRules = DEFAULT_STAKES_RULES,
     private scene: Scene = { question: "", facts: [] },
+    private opening: Opening = DEFAULT_OPENING,
+    private world: WorldFacts = DEFAULT_WORLD,
   ) {}
 
   private tick(): number { return Number(getMeta(this.db, "tick")); }
   private seed(): number { return Number(getMeta(this.db, "seed")); }
+
+  // A new game starts in the `fall`; a legacy save (no `phase`) behaves as `play`.
+  private phase(): "fall" | "play" {
+    return getMeta(this.db, "phase") === "fall" ? "fall" : "play";
+  }
+
+  private fallBeat(): number { return Number(getMeta(this.db, "fall_beat") ?? "0"); }
+
+  private fallLog(): FallChoice[] {
+    try {
+      const v = JSON.parse(getMeta(this.db, "fall_log") ?? "[]");
+      return Array.isArray(v) ? v.filter((x): x is FallChoice => x === "steer" || x === "brace" || x === "let_go") : [];
+    } catch {
+      return [];
+    }
+  }
 
   private ents(): Ent[] {
     return (this.db.prepare("SELECT * FROM entities ORDER BY rowid").all() as any[]).map((r) => ({
@@ -159,7 +184,21 @@ export class Engine {
     notable.push(`Niko stops talking with ${npc.name}.`);
   }
 
+  // During the fall the only actions are the fall choices; `brace` is hidden when Ether is short.
+  private fallActions(niko: Ent): AvailableAction[] {
+    const cost = this.opening.abilities.brace.ether_cost;
+    const acc: AvailableAction[] = [
+      { id: "fall:steer", label: "Steer toward the houses", action: { type: "fall", choice: "steer" } },
+    ];
+    if (Number(niko.data.ether ?? 0) >= cost) {
+      acc.push({ id: "fall:brace", label: "Brace against the impact", action: { type: "fall", choice: "brace" } });
+    }
+    acc.push({ id: "fall:let_go", label: "Let go and fall", action: { type: "fall", choice: "let_go" } });
+    return acc;
+  }
+
   private availableActions(niko: Ent, ents: Ent[]): AvailableAction[] {
+    if (this.phase() === "fall") return this.fallActions(niko);
     const acc: AvailableAction[] = [];
     const convo = this.conversation();
     if (convo) {
@@ -217,6 +256,26 @@ export class Engine {
     return this.scene.facts.filter((f) => ids.includes(f.id)).map((f) => f.text);
   }
 
+  // The fall beats send their altitude; the landing sends its impact and the choices taken.
+  private arrivalContext(): ArrivalContext | undefined {
+    if (this.phase() === "fall") {
+      const beat = this.fallBeat();
+      const i = Math.min(beat, this.opening.beats.length - 1);
+      return { phase: "fall", altitude: this.opening.beats[i].altitude, beat, beats: this.opening.beats.length };
+    }
+    if (this.pendingImpact) {
+      return {
+        phase: "play",
+        altitude: this.opening.beats[this.opening.beats.length - 1].altitude,
+        beat: this.opening.beats.length,
+        beats: this.opening.beats.length,
+        impact: this.pendingImpact,
+        choices: this.fallLog(),
+      };
+    }
+    return undefined;
+  }
+
   private async narrate(events: string[]): Promise<void> {
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
@@ -224,10 +283,14 @@ export class Engine {
     const visible = this.visibleActors(niko, ents);
     const convo = this.conversation();
     const convoNpc = convo ? ents.find((e) => e.id === convo.npc_id) : undefined;
+    const arrival = this.arrivalContext();
+    this.pendingImpact = null;
     const n = await this.narrator.narrate({
       tick: this.tick(),
       sheet: { name: niko.name, ...niko.data },
       place: { name: this.zone.name, description: this.zone.description, room: roomAt(this.zone, niko.x, niko.y) },
+      world: this.world,
+      arrival,
       visible: visible.map((e) => ({
         name: e.name,
         proximity: proximityLabel(chebyshev(niko, e), this.stakes),
@@ -275,13 +338,19 @@ export class Engine {
     const niko = ents.find((e) => e.id === "niko")!;
     const vis = this.visibleActors(niko, ents);
     setMeta(this.db, "visible", JSON.stringify(vis.map((e) => e.id).sort()));
-    const events = ["Niko wakes up in a bedroom he does not know. The house is silent."];
-    for (const e of vis) events.push(`${e.name} is in the room, ${this.where(niko, e)}.`);
+    const events: string[] = [];
+    if (this.phase() === "fall") {
+      events.push(`Niko falls ${this.opening.beats[0].altitude}.`);
+    } else {
+      events.push("Niko wakes up in a bedroom he does not know. The house is silent.");
+      for (const e of vis) events.push(`${e.name} is in the room, ${this.where(niko, e)}.`);
+    }
     await this.narrate(events);
     setMeta(this.db, "started", "1");
   }
 
   async takeTurn(a: Action): Promise<{ ok: boolean; error?: string }> {
+    if (this.phase() === "fall") return this.fallStep(a);
     const z = this.zone;
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
@@ -353,8 +422,84 @@ export class Engine {
     }
 
     // The world advances one tick.
+    await this.advanceWorld(notable);
+    return { ok: true };
+  }
+
+  // A fall turn is not a world turn: no tick, no NPCs and no witnesses until the last beat. The last
+  // beat lands Niko and then runs the normal world step for that turn.
+  private async fallStep(a: Action): Promise<{ ok: boolean; error?: string }> {
+    if (a.type !== "fall") return { ok: false, error: "You are still falling." };
+    if (a.choice !== "steer" && a.choice !== "brace" && a.choice !== "let_go") {
+      return { ok: false, error: "Unknown action." };
+    }
+    const cost = this.opening.abilities.brace.ether_cost;
+    const niko = this.ents().find((e) => e.id === "niko")!;
+    // A forced brace below its cost is rejected by the engine, so no client or LLM can skip it.
+    if (a.choice === "brace" && Number(niko.data.ether ?? 0) < cost) {
+      return { ok: false, error: "Not enough Ether to brace." };
+    }
+    const log = this.fallLog();
+    log.push(a.choice);
+    if (a.choice === "brace") {
+      niko.data.ether -= cost;
+      this.db.prepare("UPDATE entities SET data = ? WHERE id = 'niko'").run(JSON.stringify(niko.data));
+    }
+    setMeta(this.db, "fall_log", JSON.stringify(log));
+    const beat = this.fallBeat() + 1;
+    setMeta(this.db, "fall_beat", String(beat));
+
+    if (beat >= this.opening.beats.length) {
+      const notable: string[] = [];
+      this.land(log, notable);
+      await this.advanceWorld(notable);
+    } else {
+      await this.narrate([]);
+    }
+    return { ok: true };
+  }
+
+  // The landing is deterministic: candidates are filtered first, then rngFor(seed, 0, "landing")
+  // picks one. `steer` restricts the candidates to the configured room.
+  private land(choices: FallChoice[], notable: string[]): void {
+    const z = this.zone;
+    const impact: "soft" | "hard" = choices.includes("brace") ? "soft" : "hard";
+    const steer = choices.includes("steer");
+    const ents = this.ents();
+    const room = z.rooms.find((r) => r.id === this.opening.landing.steer_room);
+    const inRoom = (x: number, y: number) =>
+      !!room && x >= room.x && y >= room.y && x < room.x + room.w && y < room.y + room.h;
+    const tiles: Point[] = [];
+    for (let y = 0; y < z.height; y++) {
+      for (let x = 0; x < z.width; x++) {
+        if (steer && !inRoom(x, y)) continue;
+        if (this.free(x, y, ents)) tiles.push({ x, y });
+      }
+    }
+    if (!tiles.length) throw new Error("The opening has no free tile to land on");
+    const rng = rngFor(this.seed(), 0, "landing");
+    const tile = tiles[Math.floor(rng() * tiles.length)];
+    const niko = ents.find((e) => e.id === "niko")!;
+    this.moveTo(niko, tile.x, tile.y);
+    setMeta(this.db, "phase", "play");
+    if (impact === "hard") {
+      niko.data.ether = 0;
+      this.db.prepare("UPDATE entities SET data = ? WHERE id = 'niko'").run(JSON.stringify(niko.data));
+    }
+    setMeta(this.db, "visible", JSON.stringify(this.visibleActors(niko, ents).map((e) => e.id).sort()));
+    this.record("arrives", tile.x, tile.y, "niko", { impact, choices }, true);
+    this.pendingImpact = impact;
+    notable.push(`Niko lands in ${roomAt(z, tile.x, tile.y)}.`);
+  }
+
+  // One world step: the tick, Ether regen, NPC agendas and the change in Niko's field of view. Used
+  // by every action and by the landing that closes the opening.
+  private async advanceWorld(notable: string[]): Promise<void> {
+    const z = this.zone;
     const tick = this.tick() + 1;
     setMeta(this.db, "tick", String(tick));
+    const ents = this.ents();
+    const niko = ents.find((e) => e.id === "niko")!;
     const d = niko.data;
     d.ether = Math.min(d.ether_max, d.ether + d.ether_regen);
     this.db.prepare("UPDATE entities SET data = ? WHERE id = 'niko'").run(JSON.stringify(d));
@@ -410,7 +555,6 @@ export class Engine {
     setMeta(this.db, "visible", JSON.stringify(now));
 
     if (notable.length) await this.narrate(notable);
-    return { ok: true };
   }
 
   positions(): Record<string, [number, number]> {
@@ -421,6 +565,8 @@ export class Engine {
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
     const tick = this.tick();
+    const phase = this.phase();
+    const beat = this.fallBeat();
     const actions = this.availableActions(niko, ents);
     const narr = (
       this.db.prepare("SELECT tick, data FROM events WHERE type = 'narration' ORDER BY id DESC LIMIT 15").all() as
@@ -433,8 +579,13 @@ export class Engine {
       const o = last.options.filter((x) => byId.has(x.id)).map((x) => ({ text: x.text, action: byId.get(x.id)!.action }));
       if (o.length) options = o;
     }
+    const i = Math.min(beat, this.opening.beats.length - 1);
     return {
       tick,
+      phase,
+      ...(phase === "fall"
+        ? { fall: { altitude: this.opening.beats[i].altitude, beat, beats: this.opening.beats.length } }
+        : {}),
       zone: { id: this.zone.id, name: this.zone.name, width: this.zone.width, height: this.zone.height,
         map: this.zone.map, objects: this.zone.objects, rooms: this.zone.rooms },
       room: roomAt(this.zone, niko.x, niko.y),

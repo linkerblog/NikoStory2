@@ -122,6 +122,11 @@ export function memoryFromEvent(
     case "appears":
       text = `${actor} came into view.`;
       break;
+    case "arrives":
+      text = event.data.impact === "hard"
+        ? `${actor} crashed down from the sky.`
+        : `${actor} dropped from the sky and landed.`;
+      break;
     default:
       text = event.actor_id ? `${actor} did something.` : "Something happened.";
   }
