@@ -7,7 +7,7 @@ import { sanitizeEffect, type Effect } from "./interpreter.js";
 // actor only; the engine validates them with the same tile, path and witness rules it uses for Niko.
 export interface NpcActor { id: string; name: string; personality: string; voice?: string }
 export interface NpcAgenda { goal_id: string; kind: string; want: string }
-export interface NpcVisible { id: string; name: string; proximity: string; direction: string }
+export interface NpcVisible { id: string; name: string; proximity: string; direction: string; health?: string }
 export interface NpcContext {
   tick: number;
   actor: NpcActor;
@@ -49,6 +49,8 @@ Rules:
   {"kind":"end_conversation"}
   {"kind":"interact","target":"<object id>","verb":"examine"}
   {"kind":"ability","id":"<ability id>","target":"<id, optional>"}
+  {"kind":"attack","target":"<visible character id>"}
+- "attack" only works on someone right next to this character who struck it a moment ago; use it to defend yourself, never to start a fight.
 - "speak" to a character starts or continues a conversation; it only works when that character is right next to this one.
 - If nothing is worth doing, return {"effects":[{"kind":"wait"}]}.
 World limits: ${c.rules.limits.join(" ") || "none."} ${c.rules.risk}

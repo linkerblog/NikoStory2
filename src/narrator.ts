@@ -5,7 +5,7 @@ import { DEFAULT_STAKES_RULES, type StakesRules } from "./stakes.js";
 import type { WorldFacts } from "./world.js";
 
 export interface Narration { text: string; degraded?: boolean }
-export interface VisibleActor { name: string; proximity: string; direction: string; personality: string }
+export interface VisibleActor { name: string; proximity: string; direction: string; personality: string; health?: string }
 export interface ConversationContext { npc: string; beat: number; maxBeats: number; want: string }
 // The opening: `impact` is only set on the landing beat; `beat`/`beats` drive the fall beats and
 // `text` is the free-form action the player just wrote for this beat.
@@ -116,6 +116,7 @@ export const systemPrompt = (language: string) =>
 Rules:
 - Short sentences, at most two per narration, fast rhythm, no decorative text.
 - Never state a distance as a number: no tiles, no metres. Use the proximity words in the situation.
+- Never state health, damage or Ether as numbers. Use the health words in the situation (niko_sheet.health, visible_characters[].health); a character who is "down" cannot act.
 - Do not restate what the previous narrations already said.
 - End on pressure, a question or a visible choice.
 - Do not decide for Niko: tell what happens and what he perceives. Do not invent characters or objects that are not in the situation.

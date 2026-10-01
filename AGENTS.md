@@ -11,10 +11,10 @@ localhost. The world lives in one SQLite file; the browser draws the state and s
 Narration is optional and comes from an LLM through OpenRouter, falling back to an offline
 template narrator with no network and no cost.
 
-Current scope (prototype v0.7.0): one hand-made house zone, a scripted three-beat fall that opens a
+Current scope (prototype v0.9.0): one hand-made house zone, a scripted three-beat fall that opens a
 new game, Niko, two NPCs with data-driven agendas and an optional `npc` role that proposes their
 actions, a tick clock, Ether with regeneration, line-of-sight perception and events stored with their
-witnesses, portable items with `take`/`drop`/`search`/`read` and a scene goal. Free text is the only
+witnesses, portable items with `take`/`drop`/`search`/`read`, unarmed combat with hit points and a scene goal. Free text is the only
 input: an interpreter role turns it into typed effects the engine validates. What is and is not
 implemented is listed in `README.md`.
 
@@ -40,6 +40,10 @@ implemented is listed in `README.md`.
   situation; an effect with an unknown id, a path through a wall or more than `rules.maxEffects`
   effects is rejected with a reason. Risky outcomes are rolled by the engine with `rngFor`, never by
   the model.
+- **Health is the engine's.** HP lives in `entities.data` (`hp`, `hp_max`, `guard_until`, `downed_until`);
+  only `src/engine.ts` writes it, through `Engine.strike` for Niko and NPCs alike, with the blow rolled by
+  `rngFor`. The Ether Core takes damage first and 0 HP downs a character, it never kills. Prompts get a
+  health word from `healthBand`, never a number, and `publicData` strips the raw keys from every sheet.
 - **Reactions come from knowledge.** Every event is stored with its `witnesses`: only the entities
   that could see it (vision range plus line of sight). Nothing reacts to what it did not perceive.
 - **Determinism.** Randomness goes through the stateless seeded RNG (`rngFor(seed, tick, key)` in
@@ -88,8 +92,9 @@ implemented is listed in `README.md`.
   ranked recall are implemented).
 - NPC knowledge of facts, beliefs and relationships; NPCs still do not read `facts_known`.
 - Zone generation. The south door (`D`) is the trigger and currently only prints a message.
-- Combat, health and equipment. Only `brace` exists in `data/rules.json`; an `ability` effect other
-  than a declared ability is rejected.
+- Weapons, equipment, ranged attacks, fall damage and death. `brace` is the only ability in
+  `data/rules.json`; an `ability` effect other than a declared ability is rejected. Offline NPCs never
+  fight back: retaliation comes only from the `npc` role.
 - `give`, `use`, locks, containers, items for NPCs (they cannot take or read yet) and a scene after
   `scene_resolved`. The letter text and the goal text are placeholders until the author writes them.
 - Adult ops: no sexual action exists yet. When one is added it must be adults-only and require

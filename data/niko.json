@@ -12,6 +12,8 @@
     "height_cm": 165,
     "weight_kg": 118,
     "personality": "introverted, clumsy, relaxed, affectionate, very calm",
+    "hp": 20,
+    "hp_max": 20,
     "ether": 3,
     "ether_max": 100,
     "ether_regen": 1

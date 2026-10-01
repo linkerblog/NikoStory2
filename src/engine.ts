@@ -17,6 +17,7 @@ import type { NpcContext, NpcDecision, NpcDecider } from "./npc.js";
 import type { Action, Dir, ItemRef, ItemVerb, ReplyChoice } from "./actions.js";
 import { readItems, type Item } from "./items.js";
 import type { CastWriter } from "./cast.js";
+import { healthBand, mitigate, publicData, rollBlow, vitalsOf, type Vitals } from "./combat.js";
 
 export type { Action, Dir, ItemVerb, ReplyChoice } from "./actions.js";
 export { parseFreeAction } from "./actions.js";
@@ -146,6 +147,25 @@ export class Engine {
   private fallBrace(): boolean { return getMeta(this.db, "fall_brace") === "1"; }
 
   private abilityCost(id: string): number { return this.rules.abilities[id]?.ether_cost ?? 0; }
+
+  // Health lives in `entities.data` next to Ether and only the engine writes it. A missing `hp` reads as
+  // full health, so a legacy save or a generated cast needs no backfill.
+  private vitals(e: Ent): Vitals { return vitalsOf(e, this.rules.combat); }
+  private isDown(e: Ent): boolean { return this.vitals(e).hp <= 0; }
+  private health(e: Ent): string { return healthBand(this.vitals(e), this.rules.combat); }
+
+  // What a prompt may know about an entity: no raw health keys, only the word for how hurt it is.
+  private publicSheet(e: Ent): Record<string, unknown> {
+    return { name: e.name, ...publicData(e.data), health: this.health(e) };
+  }
+
+  private fresh(id: string): Ent {
+    return this.ents().find((e) => e.id === id)!;
+  }
+
+  private saveData(e: Ent): void {
+    this.db.prepare("UPDATE entities SET data = ? WHERE id = ?").run(JSON.stringify(e.data), e.id);
+  }
 
   private ents(): Ent[] {
     return (this.db.prepare("SELECT * FROM entities ORDER BY rowid").all() as any[]).map((r) => ({
@@ -477,7 +497,7 @@ export class Engine {
       : { name: this.zone.name, description: this.zone.description, room: roomAt(this.zone, niko.x, niko.y) };
     const n = await this.narrator.narrate({
       tick: this.tick(),
-      sheet: { name: niko.name, ...niko.data },
+      sheet: this.publicSheet(niko),
       place,
       world: this.world,
       arrival,
@@ -486,6 +506,7 @@ export class Engine {
         proximity: proximityLabel(chebyshev(niko, e), this.stakes),
         direction: directionWord(niko, e),
         personality: String(e.data.personality ?? ""),
+        health: this.health(e),
       })),
       events,
       effects,
@@ -533,7 +554,7 @@ export class Engine {
     return {
       text,
       tick: this.tick(),
-      sheet: { name: niko.name, ...niko.data },
+      sheet: this.publicSheet(niko),
       ether: Number(niko.data.ether ?? 0),
       etherMax: Number(niko.data.ether_max ?? 0),
       rules: this.rules,
@@ -543,6 +564,7 @@ export class Engine {
         id: e.id, name: e.name,
         proximity: proximityLabel(chebyshev(niko, e), this.stakes),
         direction: directionWord(niko, e),
+        health: this.health(e),
       })),
       items: this.itemsFor(niko, readItems(this.db)),
       conversation: convo && convoNpc
@@ -597,6 +619,7 @@ export class Engine {
 
   private async runTurn(a: Action): Promise<{ ok: boolean; error?: string }> {
     if (this.phase() === "fall") return this.fallStep(a);
+    if (this.isDown(this.fresh("niko"))) return this.downTurn();
     if (a.type === "free") return this.freeTurn(a.text ?? "");
     if (a.type === "fall") return { ok: false, error: "Niko is not falling." };
 
@@ -604,6 +627,14 @@ export class Engine {
     if (!applied.ok) return applied;
     const notable = [...applied.notable, ...(await this.stepWorld())];
     if (notable.length) await this.narrate(notable);
+    return { ok: true };
+  }
+
+  // A downed Niko cannot choose: whatever was sent, the turn passes. The interpreter is not called, so
+  // lying on the floor costs nothing, and the world keeps ticking until he stands up.
+  private async downTurn(): Promise<{ ok: boolean; error?: string }> {
+    const notable = ["Niko is down and cannot act.", ...(await this.stepWorld())];
+    await this.narrate(notable);
     return { ok: true };
   }
 
@@ -710,6 +741,89 @@ export class Engine {
         return { ok: false, error: "Niko cannot do that with it." };
       case "ability":
         return this.applyAction({ type: "ability", id: e.id, target: e.target });
+      case "attack":
+        return this.applyAction({ type: "attack", target: e.target });
+    }
+  }
+
+  // One blow, for Niko and for NPCs alike, so nobody gets a private shortcut. The roll is seeded by
+  // (attacker, target, tick); the target is re-read because a step's snapshot can be stale. The Ether
+  // Core takes damage before HP does, and reaching 0 HP downs the character instead of killing it.
+  private strike(attacker: Ent, targetId: string): Applied {
+    const target = this.fresh(targetId);
+    const rules = this.rules.combat;
+    const tick = this.tick();
+    const blow = rollBlow(rules, rngFor(this.seed(), tick, `strike:${attacker.id}:${target.id}`));
+    if (!blow.hit) {
+      this.record("miss", attacker.x, attacker.y, attacker.id, { target: target.id }, true);
+      return { ok: true, notable: [`${attacker.name} swings at ${target.name} and misses.`] };
+    }
+    const guarded = Number(target.data.guard_until ?? -1) >= tick;
+    const m = mitigate(blow.damage, Number(target.data.ether ?? 0), guarded, rules);
+    const v = this.vitals(target);
+    const hp = Math.max(0, v.hp - m.hpLost);
+    target.data.hp = hp;
+    target.data.hp_max = v.max;
+    if (m.etherSpent) target.data.ether = Number(target.data.ether ?? 0) - m.etherSpent;
+    const down = hp === 0;
+    if (down) target.data.downed_until = tick + rules.downedTicks;
+    this.saveData(target);
+    this.record(
+      "hit", attacker.x, attacker.y, attacker.id,
+      { target: target.id, damage: m.taken, absorbed: m.absorbed, hp_lost: m.hpLost, guarded },
+      true,
+    );
+    const notable = [m.taken > 0
+      ? `${attacker.name} hits ${target.name}.`
+      : `${attacker.name}'s blow glances off ${target.name}'s guard.`];
+    if (m.absorbed > 0) notable.push(`${target.name}'s Ether takes part of the blow.`);
+    if (down) {
+      this.record("down", target.x, target.y, target.id, { by: attacker.id }, true);
+      // A character on the floor cannot keep a conversation. Closing it here, not through
+      // `closeConversation`, so the fact it would have revealed stays unrevealed.
+      this.db.prepare(
+        "UPDATE conversations SET status = 'closed' WHERE status = 'open' AND (initiator_id = ? OR listener_id = ?)",
+      ).run(target.id, target.id);
+      notable.push(`${target.name} goes down.`);
+    }
+    return { ok: true, notable };
+  }
+
+  // An NPC may hit back only at someone it saw strike it a moment ago: the reaction comes from what it
+  // witnessed, never from the model's mood.
+  private provoked(npcId: string, aggressorId: string): boolean {
+    const since = this.tick() - this.rules.combat.retaliateTicks;
+    return !!this.db.prepare(
+      `SELECT 1 FROM events e JOIN witnesses w ON w.event_id = e.id
+       WHERE w.character_id = ? AND e.actor_id = ? AND e.type IN ('hit', 'miss') AND e.tick >= ?
+         AND json_extract(e.data, '$.target') = ? LIMIT 1`,
+    ).get(npcId, aggressorId, since, npcId);
+  }
+
+  // Recovery and regeneration depend on the tick alone, and run before the step reads its snapshot so
+  // every later write in the step starts from the new health.
+  private recoverAndRegen(tick: number, notable: string[]): void {
+    const rules = this.rules.combat;
+    const all = this.ents();
+    const niko = all.find((e) => e.id === "niko")!;
+    const z = this.zone;
+    for (const e of all) {
+      const v = this.vitals(e);
+      if (v.hp <= 0) {
+        if (tick < Number(e.data.downed_until ?? 0)) continue;
+        e.data.hp = Math.min(v.max, rules.recoverHp);
+        e.data.hp_max = v.max;
+        delete e.data.downed_until;
+        this.saveData(e);
+        if (e.zone_id === z.id) {
+          this.record("recover", e.x, e.y, e.id, {}, true);
+          if (e.id === niko.id || canSee(z, niko, e)) notable.push(`${e.name} gets back up.`);
+        }
+      } else if (v.hp < v.max && rules.regen.amount > 0 && tick % rules.regen.every === 0) {
+        e.data.hp = Math.min(v.max, v.hp + rules.regen.amount);
+        e.data.hp_max = v.max;
+        this.saveData(e);
+      }
     }
   }
 
@@ -779,6 +893,9 @@ export class Engine {
     const notable: string[] = [];
     const convo = this.conversation();
 
+    // A later effect of the same turn can find Niko on the floor after an NPC hit him back.
+    if (this.isDown(niko)) return { ok: false, error: "Niko is down and cannot act." };
+
     // While a conversation is open, the only ways forward are answering it or leaving it.
     if (convo && a.type !== "reply" && a.type !== "leave" && !(a.type === "talk" && this.hasParticipant(convo, a.target))) {
       return { ok: false, error: "Finish the conversation first." };
@@ -814,6 +931,7 @@ export class Engine {
       case "talk": {
         const t = ents.find((e) => e.id === a.target && e.type === "npc" && e.zone_id === z.id);
         if (!t || !near(niko, t)) return { ok: false, error: "There is no one to talk to there." };
+        if (this.isDown(t)) return { ok: false, error: `${t.name} is down and cannot answer.` };
         if (convo) {
           const beat = convo.beat + 1;
           this.record("talk", niko.x, niko.y, "niko", { target: t.id, beat, choice: "ask" }, true);
@@ -863,6 +981,13 @@ export class Engine {
       }
       case "item":
         return this.applyItem(a, niko);
+      case "attack": {
+        const t = ents.find((e) => e.id === a.target && e.type === "npc" && e.zone_id === z.id);
+        if (!t) return { ok: false, error: "There is no one to strike there." };
+        if (!near(niko, t)) return { ok: false, error: "That is out of reach." };
+        if (this.isDown(t)) return { ok: false, error: `${t.name} is already down.` };
+        return this.strike(niko, t.id);
+      }
       case "ability": {
         const ability = this.rules.abilities[a.id];
         if (!ability) return { ok: false, error: "Niko cannot do that." };
@@ -872,6 +997,7 @@ export class Engine {
           if (!spot || chebyshev(niko, spot) > ability.range) return { ok: false, error: "That is out of reach." };
         }
         niko.data.ether = Number(niko.data.ether ?? 0) - ability.ether_cost;
+        if (ability.guard_ticks) niko.data.guard_until = this.tick() + ability.guard_ticks;
         this.db.prepare("UPDATE entities SET data = ? WHERE id = 'niko'").run(JSON.stringify(niko.data));
         // Risky outcomes are the engine's: the roll is seeded and stored, never the model's.
         const roll = rngFor(this.seed(), this.tick(), "risk")();
@@ -957,6 +1083,7 @@ export class Engine {
     const z = this.zone;
     const tick = this.tick() + 1;
     setMeta(this.db, "tick", String(tick));
+    this.recoverAndRegen(tick, notable);
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
     const d = niko.data;
@@ -965,7 +1092,8 @@ export class Engine {
 
     // NPCs pursue their agenda with the same movement rules as Niko; wander is only the fallback.
     // Only the NPCs in Niko's zone act: a character in another zone has no shared grid to path on.
-    for (const npc of ents.filter((e) => e.type === "npc" && e.zone_id === z.id)) {
+    // A downed NPC does nothing until it stands up.
+    for (const npc of ents.filter((e) => e.type === "npc" && e.zone_id === z.id && !this.isDown(e))) {
       const convo = this.conversationFor(npc.id);
       // Niko drives his own exchange; an NPC-to-NPC conversation is driven by the `npc` role below.
       if (convo && this.hasParticipant(convo, "niko")) continue;
@@ -1076,6 +1204,7 @@ export class Engine {
           id: e.id, name: e.name,
           proximity: proximityLabel(chebyshev(npc, e), this.stakes),
           direction: directionWord(npc, e),
+          health: this.health(e),
         })),
       objects: z.objects.map((o) => ({ id: o.id, name: o.name })),
       ether: Number(npc.data.ether ?? 0),
@@ -1152,11 +1281,19 @@ export class Engine {
         this.record("examine", npc.x, npc.y, npc.id, { target: o.id }, true);
         return { ok: true, notable: [`${npc.name} examines ${o.name}.`] };
       }
+      case "attack": {
+        const t = ents.find((x) => x.id === e.target && x.zone_id === z.id && x.id !== npc.id);
+        if (!t || !near(npc, t)) return { ok: false, error: "There is no one to strike there." };
+        if (this.isDown(this.fresh(t.id))) return { ok: false, error: `${t.name} is already down.` };
+        if (!this.provoked(npc.id, t.id)) return { ok: false, error: `${npc.name} has no cause to strike.` };
+        return this.strike(npc, t.id);
+      }
       case "ability": {
         const ability = this.rules.abilities[e.id];
         if (!ability) return { ok: false, error: "No such ability." };
         if (Number(npc.data.ether ?? 0) < ability.ether_cost) return { ok: false, error: "Not enough Ether." };
         npc.data.ether = Number(npc.data.ether ?? 0) - ability.ether_cost;
+        if (ability.guard_ticks) npc.data.guard_until = this.tick() + ability.guard_ticks;
         this.db.prepare("UPDATE entities SET data = ? WHERE id = ?").run(JSON.stringify(npc.data), npc.id);
         const roll = rngFor(this.seed(), this.tick(), `risk:${npc.id}`)();
         this.record("ability", npc.x, npc.y, npc.id, { id: ability.id, target: e.target ?? null, roll }, true);
@@ -1279,7 +1416,9 @@ export class Engine {
       phase: this.phase(),
       seed: this.seed(),
       started: getMeta(this.db, "started") ?? null,
-      niko: niko ? { x: niko.x, y: niko.y, ether: niko.data.ether, ether_max: niko.data.ether_max } : null,
+      niko: niko
+        ? { x: niko.x, y: niko.y, ether: niko.data.ether, ether_max: niko.data.ether_max, hp: this.vitals(niko).hp, hp_max: this.vitals(niko).max }
+        : null,
       zone: { id: this.zone.id, name: this.zone.name, width: this.zone.width, height: this.zone.height },
       entities: ents.map((e) => ({ id: e.id, type: e.type, name: e.name, x: e.x, y: e.y, data: e.data })),
       positions: this.positions(),
@@ -1334,8 +1473,13 @@ export class Engine {
       },
       zoneId: z.id,
       room: roomAt(z, niko.x, niko.y),
-      niko: { x: niko.x, y: niko.y, ether: niko.data.ether, ether_max: niko.data.ether_max },
-      npcs: this.visibleActors(niko, ents).map((e) => ({ id: e.id, name: e.name, x: e.x, y: e.y })),
+      niko: {
+        x: niko.x, y: niko.y, ether: niko.data.ether, ether_max: niko.data.ether_max,
+        hp: this.vitals(niko).hp, hp_max: this.vitals(niko).max, health: this.health(niko), down: this.isDown(niko),
+      },
+      npcs: this.visibleActors(niko, ents).map((e) => ({
+        id: e.id, name: e.name, x: e.x, y: e.y, health: this.health(e), down: this.isDown(e),
+      })),
       inventory: items.filter((i) => i.holder_id === niko.id).map((i) => ({ id: i.id, name: i.name })),
       items: items
         .filter((i) => !i.hidden && i.zone_id === z.id)

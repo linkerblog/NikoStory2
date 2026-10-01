@@ -17,6 +17,7 @@ export type Action =
   | { type: "item"; verb: ItemVerb; target: string }
   | { type: "say"; text: string }
   | { type: "ability"; id: string; target?: string }
+  | { type: "attack"; target: string }
   | { type: "fall"; text: string }
   | { type: "free"; text: string };
 
@@ -60,6 +61,12 @@ export function parseFreeAction(
       .find((e) => name && e.name.toLowerCase().includes(name.toLowerCase()));
     if (npc) return { type: "talk", target: npc.id };
   }
+  if (STRIKE_VERBS.includes(head)) {
+    const name = nameAfter(t.replace(/^\w+/, ""));
+    const npc = ents.filter((e) => e.type === "npc" && e.zone_id === zone.id)
+      .find((e) => name && e.name.toLowerCase().includes(name));
+    return npc ? { type: "attack", target: npc.id } : null;
+  }
   const verb = ITEM_VERBS.find(([re]) => re.test(t));
   if (verb) {
     const name = nameAfter(t.replace(verb[0], ""));
@@ -83,6 +90,8 @@ export function parseFreeAction(
   }
   return null;
 }
+
+const STRIKE_VERBS = ["attack", "hit", "punch", "strike", "kick", "slap"];
 
 // `open` is a search: the engine resolves it on the object and finds nothing when nothing is hidden.
 const ITEM_VERBS: [RegExp, ItemVerb][] = [

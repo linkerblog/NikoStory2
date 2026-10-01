@@ -19,6 +19,7 @@
     --danger: #ff6b6b;
     --ok: #8ddb8c;
     --mana: #b48ead;
+    --hp: var(--danger);
     --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
     --radius: 4px;
     --font: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -100,6 +101,8 @@
   .stat-row .v { color: var(--fg); }
   .bar { letter-spacing: 1px; }
   .bar.mana { color: var(--mana); }
+  .bar.hp { color: var(--hp); }
+  .down-tag { color: var(--danger); font-weight: bold; }
   .subhead {
     padding: var(--s2) var(--s3); border-top: 1px solid var(--border);
     color: var(--fg-dim); font-weight: 600; font-size: 13px; letter-spacing: 0.5px;
@@ -593,13 +596,16 @@ function renderStatus() {
   const el = $("status");
   const rows = [];
   rows.push(`<div class="stat-name">@ Niko</div>`);
+  if (S.niko.hp !== undefined) {
+    rows.push(`<div class="stat-row"><span class="k">HP</span><span class="bar hp">${bar(S.niko.hp, S.niko.hp_max)}</span><span class="v">${S.niko.hp}/${S.niko.hp_max}${S.niko.down ? ` <span class="down-tag">DOWN</span>` : ""}</span></div>`);
+  }
   rows.push(`<div class="stat-row"><span class="k">Mana</span><span class="bar mana">${bar(S.niko.ether, S.niko.ether_max)}</span><span class="v">${S.niko.ether}/${S.niko.ether_max}</span></div>`);
   rows.push(`<div class="stat-row"><span class="k">Zone</span><span class="v">${esc(S.zone.name)}</span></div>`);
   if (S.room) rows.push(`<div class="stat-row"><span class="k">Room</span><span class="v">${esc(S.room)}</span></div>`);
   rows.push(`<div class="stat-row"><span class="k">Pos</span><span class="v">${S.niko.x},${S.niko.y}</span></div>`);
   el.innerHTML = rows.join("");
   $("nearby").innerHTML = S.npcs.length
-    ? S.npcs.map((n) => `<div class="near">\u25b8 ${esc(n.name)}</div>`).join("")
+    ? S.npcs.map((n) => `<div class="near">\u25b8 ${esc(n.name)}${n.health && n.health !== "unhurt" ? ` <span class="${n.down ? "down-tag" : "dim"}">(${esc(n.health)})</span>` : ""}</div>`).join("")
     : `<div class="near dim">\u00b7 no one in sight</div>`;
   const inv = S.inventory || [];
   $("inventory").innerHTML = inv.length

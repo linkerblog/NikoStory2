@@ -1,4 +1,4 @@
-# NikoStory2 — prototype v0.7.0
+# NikoStory2 — prototype v0.9.0
 
 A turn-based 2D game on a grid (1 tile = 1 m). Everything runs on your computer and the world
 lives in a single SQLite file. The browser draws the state and sends commands; it never simulates.
@@ -58,12 +58,13 @@ continuity rewrite. If that fails the offline narrator is used without breaking 
 | `src/cast.ts` | Loads and validates `data/cast.json` and generates a new cast from a seed |
 | `src/zones.ts` | Zone store, the deterministic street/building generator and the LLM-draft validator |
 | `src/actions.ts` | The single `Action` union and the deterministic free-text parser |
-| `src/rules.ts` | Loads and validates `data/rules.json` (abilities, effect limits, inventory slots, world limits) |
+| `src/rules.ts` | Loads and validates `data/rules.json` (abilities, combat, effect limits, inventory slots, world limits) |
+| `src/combat.ts` | Pure health rules: vitals with defaults, health bands, the seeded blow roll, Ether/guard mitigation |
 | `src/items.ts` | Items: the `Item` type, `data/items.json` validation and the once-per-save seeding |
 | `src/interpreter.ts` | The `Effect`/`Interpretation` types, the offline interpreter and the OpenRouter one |
 | `src/llm.ts` | Per-role model/reasoning/idle config, the streaming OpenRouter client and role logging |
 | `src/models.ts` | Merges the Models tab choices with `.env` per role, validates edits and parses the OpenRouter model list |
-| `src/engine.ts` | Effects, the opening fall, tick clock, Ether, perception, agendas, conversations, narration and `state()` |
+| `src/engine.ts` | Effects, the opening fall, tick clock, Ether, health and strikes, perception, agendas, conversations, narration and `state()` |
 | `src/agenda.ts` | Deterministic goals and BFS pathing for NPCs |
 | `src/npc.ts` | The optional `npc` role: one proposal per actor, validated by the engine |
 | `src/stakes.ts` | Scene hook, proximity/direction helpers and the stakes rules |
@@ -86,13 +87,22 @@ npm test          # tests only
 ## What is implemented
 
 - Free text as the only input, in any language. The **interpreter** reads it and returns typed effects
-  (`move`, `wait`, `speak`, `end_conversation`, `interact`, `ability`; `interact` carries one of the
+  (`move`, `wait`, `speak`, `end_conversation`, `interact`, `ability`, `attack`; `interact` carries one of the
   verbs `examine`, `search`, `take`, `drop`, `read`); the engine validates every one
   against the rules, applies them in order (one effect = one tick, at most `maxEffects`), stops at the
   first rejection and narrates the whole turn once. An effect with an unknown id, a path through a
   wall or too many effects is rejected with a reason.
 - The interpreter may only use ids present in the situation; risky outcomes are rolled by the engine
   with `rngFor(seed, tick, "risk")` and stored in the event, never decided by the model.
+- Health (`src/combat.ts`, `combat` in `data/rules.json`): HP lives in `entities.data` next to Ether, with
+  no migration; a missing `hp` reads as full health (Niko 20, an NPC 12). An unarmed `attack` needs the
+  target right next to Niko and is rolled by the engine with `rngFor(seed, tick, "strike:<a>:<t>")`: one
+  draw for the hit, one for the damage. The Ether Core takes damage first (`etherPerHp` Ether per point),
+  `brace` opens a guard window (`guard_ticks`) that halves a blow, and at 0 HP a character is down for
+  `downedTicks` ticks instead of dying: a downed NPC does not act or talk, a downed Niko's turns pass
+  with no interpreter call. HP regenerates slowly. The narrator and the interpreter see only a health word
+  (`unhurt`, `hurt`, `badly hurt`, `near collapse`, `down`), never the numbers. An NPC may hit back, through
+  the `npc` role, only at someone it witnessed striking it within `retaliateTicks`; offline NPCs stay passive.
 - Offline mode wraps the deterministic parser, so zero-cost play and the tests run the same engine.
 - The planner/narrator split: the model proposes prose and typed effects, the engine commits state.
 - A scripted three-beat fall opens a new game: each beat takes free text, the engine scans it
@@ -165,7 +175,7 @@ npm test          # tests only
 - Beliefs, relationships, embeddings and semantic retrieval of memories.
 - NPC knowledge of facts, beliefs and relationships; NPCs still do not read `facts_known`.
 - NPCs crossing zones: they only act in the zone Niko is in, and idle while he is away.
-- Combat, health and equipment; attacking is refused by the interpreter with a reason.
+- Weapons, equipment, ranged attacks, fall damage, death and healing items; offline NPCs never fight back.
 - `give`, `use`, locks, containers, NPCs that take or react to items, items in generated buildings,
   and a second scene after `scene_resolved`.
 - Zone generation. The south door (`D`) is the trigger and currently only prints a message.

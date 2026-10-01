@@ -9,13 +9,31 @@
       "id": "brace",
       "ether_cost": 2,
       "range": 0,
-      "description": "Cushion an impact by spending the Ether Core's charge."
+      "guard_ticks": 2,
+      "description": "Cushion an impact or guard against a blow by spending the Ether Core's charge."
     }
   ],
+  "combat": {
+    "hp": { "niko": 20, "npc": 12 },
+    "strike": { "hit": 0.75, "min": 1, "max": 3 },
+    "etherPerHp": 2,
+    "guardFactor": 0.5,
+    "downedTicks": 5,
+    "recoverHp": 3,
+    "regen": { "every": 10, "amount": 1 },
+    "retaliateTicks": 20,
+    "bands": [
+      { "max": 0, "label": "down" },
+      { "max": 0.25, "label": "near collapse" },
+      { "max": 0.5, "label": "badly hurt" },
+      { "max": 0.999, "label": "hurt" },
+      { "max": 1, "label": "unhurt" }
+    ]
+  },
   "limits": [
     "Niko cannot fly.",
     "Niko cannot walk through walls, sealed doors or people.",
-    "Niko cannot attack, take damage or use weapons yet."
+    "Niko has no weapons: he strikes with his fists, only at someone right next to him."
   ],
   "risk": "Risky outcomes are rolled by the engine, never decided by the model: the interpreter describes intent, the engine resolves the result."
 }

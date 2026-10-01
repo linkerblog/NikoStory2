@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { DEFAULT_COMBAT, parseCombat, type CombatRules } from "./combat.js";
 
 // The hard rules of the game world, authored in `data/rules.json`. The interpreter reads them
 // verbatim so the model can only propose what the engine already knows how to resolve, and the
@@ -8,10 +9,14 @@ export interface Ability {
   ether_cost: number;
   range: number;
   description: string;
+  // Ticks during which the user's incoming blows are reduced (`combat.guardFactor`). Absent for
+  // abilities that do not guard.
+  guard_ticks?: number;
 }
 
 export interface GameRules {
   abilities: Record<string, Ability>;
+  combat: CombatRules;
   maxEffects: number;
   maxPathSteps: number;
   summaryEveryTicks: number;
@@ -26,8 +31,9 @@ export interface GameRules {
 
 export const DEFAULT_RULES: GameRules = {
   abilities: {
-    brace: { id: "brace", ether_cost: 2, range: 0, description: "Cushion an impact by spending Ether." },
+    brace: { id: "brace", ether_cost: 2, range: 0, description: "Cushion an impact by spending Ether.", guard_ticks: 2 },
   },
+  combat: DEFAULT_COMBAT,
   maxEffects: 4,
   maxPathSteps: 6,
   summaryEveryTicks: 20,
@@ -55,9 +61,13 @@ export function loadRules(dataDir: string): GameRules {
     if (typeof a?.id !== "string" || !a.id) throw new Error("rules.json ability needs a non-empty id");
     if (!nonNegativeInt(a.ether_cost)) throw new Error(`rules.json ability ${a.id} needs a non-negative ether_cost`);
     if (!nonNegativeInt(a.range)) throw new Error(`rules.json ability ${a.id} needs a non-negative range`);
+    if (a.guard_ticks !== undefined && !positiveInt(a.guard_ticks)) {
+      throw new Error(`rules.json ability ${a.id} needs a positive integer guard_ticks`);
+    }
     abilities[a.id] = {
       id: a.id, ether_cost: a.ether_cost, range: a.range,
       description: typeof a.description === "string" ? a.description : "",
+      ...(a.guard_ticks !== undefined ? { guard_ticks: a.guard_ticks } : {}),
     };
   }
   if (!positiveInt(raw.maxEffects)) throw new Error("rules.json maxEffects must be a positive integer");
@@ -75,6 +85,7 @@ export function loadRules(dataDir: string): GameRules {
   if (typeof raw.risk !== "string") throw new Error("rules.json risk must be a string");
   return {
     abilities,
+    combat: parseCombat(raw.combat),
     maxEffects: raw.maxEffects,
     maxPathSteps: raw.maxPathSteps,
     summaryEveryTicks: raw.summaryEveryTicks,

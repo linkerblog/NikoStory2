@@ -18,7 +18,10 @@ export interface MemoryRules {
 }
 
 export const DEFAULT_MEMORY_RULES: MemoryRules = {
-  importance: { move: 1, wait: 1, appears: 4, examine: 3, take: 3, drop: 2, search: 3, read: 6, talk: 6, talked: 7, scene_resolved: 9 },
+  importance: {
+    move: 1, wait: 1, appears: 4, examine: 3, take: 3, drop: 2, search: 3, read: 6, talk: 6, talked: 7,
+    scene_resolved: 9, hit: 6, miss: 4, down: 8, recover: 4,
+  },
   defaultImportance: 2,
   recall: {
     recencyWeight: 0.4,
@@ -137,6 +140,21 @@ export function memoryFromEvent(
     case "read":
       text = `${actor} read ${name(event.data.target as string | undefined)}.`;
       break;
+    case "hit":
+    case "miss": {
+      const target = event.data.target as string | undefined;
+      if (target) participants.add(target);
+      text = event.type === "hit"
+        ? `${actor} hit ${name(target)}.`
+        : `${actor} swung at ${name(target)} and missed.`;
+      break;
+    }
+    case "down":
+      text = `${actor} went down.`;
+      break;
+    case "recover":
+      text = `${actor} got back up.`;
+      break;
     case "scene_resolved":
       text = `${actor} understood why he fell.`;
       break;
@@ -249,6 +267,7 @@ export const memoryPrompt = (language: string) =>
 Rules:
 - One short sentence per witness, first person is not used: "<name> ...", and only what that witness could perceive.
 - Use only the given event_id and character_id values.
+- Never write numbers for damage, health or Ether; say how it looked instead.
 - importance is 1 (trivial) to 10 (life-changing).
 Respond ONLY with JSON: {"memories":[{"event_id": number, "character_id": string, "text": string, "importance": number}]}.`;
 

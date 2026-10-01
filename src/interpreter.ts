@@ -12,7 +12,8 @@ export type Effect =
   | { kind: "speak"; to: string | null; text: string; tone?: ReplyChoice }
   | { kind: "end_conversation" }
   | { kind: "interact"; target: string; verb: string }  // object or item ids; the engine closes the verb list
-  | { kind: "ability"; id: string; target?: string };
+  | { kind: "ability"; id: string; target?: string }
+  | { kind: "attack"; target: string };                // a character id; the engine rolls the blow
 
 export interface Interpretation {
   effects: Effect[];                // at most rules.maxEffects; the engine rejects anything longer
@@ -29,7 +30,7 @@ export interface InterpretContext {
   rules: GameRules;
   zone: Zone;
   ents: Ent[];
-  visible: { id: string; name: string; proximity: string; direction: string }[];
+  visible: { id: string; name: string; proximity: string; direction: string; health?: string }[];
   // Niko's inventory plus the non-hidden items he can see. A hidden item is never sent, so the model
   // cannot take what nobody has found.
   items: ItemRef[];
@@ -75,6 +76,7 @@ export function actionToEffects(a: Action): Effect[] {
     case "item": return [{ kind: "interact", target: a.target, verb: a.verb }];
     case "say": return [{ kind: "speak", to: null, text: a.text }];
     case "ability": return [{ kind: "ability", id: a.id, target: a.target }];
+    case "attack": return [{ kind: "attack", target: a.target }];
     default: return [{ kind: "wait" }];
   }
 }
@@ -96,6 +98,7 @@ export function describeEffect(e: Effect): string {
     case "end_conversation": return "end the conversation";
     case "interact": return `${e.verb} ${e.target}`;
     case "ability": return `ability ${e.id}${e.target ? ` on ${e.target}` : ""}`;
+    case "attack": return `attack ${e.target}`;
   }
 }
 
@@ -136,6 +139,10 @@ export function sanitizeEffect(e: any): Effect | null {
     case "ability": {
       if (typeof e.id !== "string" || !e.id) return null;
       return typeof e.target === "string" ? { kind: "ability", id: e.id, target: e.target } : { kind: "ability", id: e.id };
+    }
+    case "attack": {
+      if (typeof e.target !== "string" || !e.target) return null;
+      return { kind: "attack", target: e.target };
     }
     default:
       return null;
@@ -179,6 +186,7 @@ Rules:
   {"kind":"end_conversation"}
   {"kind":"interact","target":"<object or item id>","verb":"examine|search|take|drop|read"}  (search targets an object, take/drop/read an item)
   {"kind":"ability","id":"<ability id>","target":"<id, optional>"}
+  {"kind":"attack","target":"<visible character id>"}  (a punch or a kick at someone right next to Niko; the engine rolls whether it lands)
 - Keep speak.text in the player's own words and language; do not rewrite it as narration.
 - If nothing in the text can be done under these rules, return {"effects":[],"impossible":{"reason":"<short reason, in ${language}>"}}.
 - "keywords": the names and objects the text mentions, for memory recall.
