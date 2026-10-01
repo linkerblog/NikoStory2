@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createGame, offlineServices } from "../src/game.js";
 import type { EngineServices } from "../src/engine.js";
 import {
-  OfflineNpcDecider, OpenRouterNpcDecider, parseNpcDecision,
+  OfflineNpcDecider, OpenRouterNpcDecider, npcPrompt, parseNpcDecision,
   type NpcContext, type NpcDecider,
 } from "../src/npc.js";
 import { LlmClient, LLM_ROLES, type LlmRole, type RoleConfig } from "../src/llm.js";
@@ -123,6 +123,78 @@ test("two NPCs hold a capped conversation the engine closes, writing no fact", a
   assert.ok(witnesses.includes("niko")); // Niko was watching; only witnesses are stored
 });
 
+test("the decider gets the actor's own ranked memories and who the character is", async () => {
+  const seen: NpcContext[] = [];
+  const decider: NpcDecider = { async decide(c) { seen.push(c); return null; } };
+  const { engine, db } = create({ npcdecider: decider });
+  place(db, "niko", 5, 2); // next to Marta, who sees every turn
+  place(db, "ivy", 1, 13);
+  await engine.start();
+  for (let i = 0; i < 7; i++) await engine.takeTurn({ type: "wait" });
+
+  const marta = seen.filter((c) => c.actor.id === "marta");
+  assert.ok(marta.length > 1);
+  const last = marta.at(-1)!;
+  assert.ok(last.memories.length > 0);
+  assert.ok(last.memories.every((m) => /^t\d+: /.test(m)));
+  assert.ok(last.memories.some((m) => /Niko waited/.test(m)), last.memories.join(" | "));
+
+  // Only what Marta herself witnessed: every line is one of her own rows.
+  const own = new Set((db.prepare("SELECT text FROM memories WHERE character_id = 'marta'").all() as { text: string }[]).map((r) => r.text));
+  for (const line of last.memories) assert.ok(own.has(line.replace(/^t\d+: /, "")), line);
+
+  // The depth the data file wrote reaches the prompt as plain fields.
+  assert.deepEqual(last.actor.traits, ["serious", "direct", "responsible"]);
+  assert.match(last.actor.quirk!, /Squares the edge/);
+  assert.match(last.actor.fear!, /warning/);
+  assert.match(last.actor.backstory!, /dispatcher/);
+});
+
+test("the prompt tells who the character is, what they remember and what daily life is for", () => {
+  const base: NpcContext = {
+    tick: 3, actor: { id: "marta", name: "Marta", personality: "serious", voice: "Blunt." }, agenda: null,
+    place: { id: "house_001", name: "House", room: "Living Room" },
+    visible: [], objects: [], ether: 0, conversation: null, recentEvents: [], memories: [], rules: DEFAULT_RULES,
+  };
+  const bare = npcPrompt(base);
+  assert.match(bare, /Character: Marta, serious\. Blunt\./);
+  assert.doesNotMatch(bare, /Traits:|Quirk:|Fear:|Background:/); // a legacy character has no depth lines
+  assert.match(bare, /"memories" is what this character remembers/);
+  assert.match(bare, /world\.life/);
+
+  const deep = npcPrompt({ ...base, actor: { ...base.actor, traits: ["wary", "guarded"], quirk: "Taps the table.", fear: "Being cheated.", backstory: "Ran a stall." } });
+  assert.match(deep, /Traits: wary, guarded\./);
+  assert.match(deep, /Quirk: Taps the table\./);
+  assert.match(deep, /Fear: Being cheated\./);
+  assert.match(deep, /Background: Ran a stall\./);
+});
+
+test("the OpenRouter decider sends the memories with the situation", async () => {
+  const { db } = create();
+  const original = globalThis.fetch;
+  const bodies: any[] = [];
+  (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"effects":[{"kind":"wait"}]}' } }], usage: { prompt_tokens: 5, completion_tokens: 7, cost: 0.001 } }), { status: 200 });
+  };
+  try {
+    const roles = Object.fromEntries(LLM_ROLES.map((r) => [r, { model: "m", reasoning: false, idleMs: 5000 }])) as Record<LlmRole, RoleConfig>;
+    const llm = new LlmClient(db, { apiKey: "t", language: "English", spendCapUsd: 0.5, roles });
+    const ctx: NpcContext = {
+      tick: 3, actor: { id: "marta", name: "Marta", personality: "serious", quirk: "Taps the table." }, agenda: null,
+      place: { id: "house_001", name: "House", room: "Living Room" },
+      visible: [], objects: [], ether: 0, conversation: null, recentEvents: [],
+      memories: ["t1: Niko came into view."], rules: DEFAULT_RULES,
+    };
+    assert.deepEqual(await new OpenRouterNpcDecider(llm).decide(ctx), { effects: [{ kind: "wait" }] });
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0].messages[0].content, /Quirk: Taps the table\./);
+    const user = JSON.parse(bodies[0].messages[1].content);
+    assert.deepEqual(user.memories, ["t1: Niko came into view."]);
+    assert.equal(user.character.quirk, "Taps the table.");
+  } finally { (globalThis as { fetch: unknown }).fetch = original; }
+});
+
 test("the OpenRouter decider returns null over budget without a call", async () => {
   const { db } = create();
   db.prepare(
@@ -138,7 +210,7 @@ test("the OpenRouter decider returns null over budget without a call", async () 
     actor: { id: "marta", name: "Marta", personality: "serious" },
     agenda: null,
     place: { id: "house_001", name: "House", room: "Living Room" },
-    visible: [], objects: [], ether: 0, conversation: null, recentEvents: [], rules: DEFAULT_RULES,
+    visible: [], objects: [], ether: 0, conversation: null, recentEvents: [], memories: [], rules: DEFAULT_RULES,
   };
   assert.equal(await new OpenRouterNpcDecider(llm).decide(ctx), null);
 });

@@ -1,0 +1,154 @@
+[
+  {
+    "id": "apartment_001",
+    "name": "The Flat",
+    "description": "A narrow flat: living room and kitchen at the top, a bathroom and a bedroom below, the front door to the south.",
+    "width": 12,
+    "height": 11,
+    "map": [
+      "############",
+      "#..........#",
+      "#..........#",
+      "#..........#",
+      "#..........#",
+      "######.#####",
+      "#....#.....#",
+      "#....#.....#",
+      "#....#.....#",
+      "#..........#",
+      "#####D######"
+    ],
+    "objects": [
+      { "id": "sofa", "type": "furniture", "name": "the sofa", "x": 2, "y": 2, "blocks": true },
+      { "id": "table", "type": "furniture", "name": "the kitchen table", "x": 8, "y": 3, "blocks": true },
+      { "id": "fridge", "type": "appliance", "name": "the refrigerator", "x": 10, "y": 1, "blocks": true },
+      { "id": "bed", "type": "furniture", "name": "the bed", "x": 8, "y": 8, "blocks": true },
+      { "id": "wardrobe", "type": "furniture", "name": "the wardrobe", "x": 10, "y": 6, "blocks": true },
+      { "id": "sink", "type": "appliance", "name": "the bathroom sink", "x": 1, "y": 6, "blocks": true }
+    ],
+    "rooms": [
+      { "id": "living_room", "name": "Living Room", "x": 1, "y": 1, "w": 10, "h": 4 },
+      { "id": "bathroom", "name": "Bathroom", "x": 1, "y": 6, "w": 4, "h": 3 },
+      { "id": "bedroom", "name": "Bedroom", "x": 6, "y": 6, "w": 5, "h": 3 },
+      { "id": "hall", "name": "Hall", "x": 1, "y": 9, "w": 10, "h": 1 }
+    ],
+    "start": { "x": 3, "y": 9 },
+    "spawns": {
+      "warner": [{ "x": 5, "y": 3 }, { "x": 7, "y": 4 }, { "x": 3, "y": 4 }, { "x": 9, "y": 4 }],
+      "finder": [{ "x": 2, "y": 7 }, { "x": 3, "y": 8 }, { "x": 7, "y": 7 }, { "x": 9, "y": 9 }]
+    }
+  },
+  {
+    "id": "farmhouse_001",
+    "name": "The Farmhouse",
+    "description": "An old farmhouse: a big kitchen and living room at the top, two bedrooms and a hall below, the front door to the south.",
+    "width": 14,
+    "height": 12,
+    "map": [
+      "##############",
+      "#............#",
+      "#............#",
+      "#............#",
+      "#............#",
+      "###.##########",
+      "#...#........#",
+      "#...#........#",
+      "#...#........#",
+      "#............#",
+      "#............#",
+      "######D#######"
+    ],
+    "objects": [
+      { "id": "sofa", "type": "furniture", "name": "the old sofa", "x": 2, "y": 2, "blocks": true },
+      { "id": "table", "type": "furniture", "name": "the kitchen table", "x": 9, "y": 3, "blocks": true },
+      { "id": "stove", "type": "appliance", "name": "the wood stove", "x": 11, "y": 1, "blocks": true },
+      { "id": "bed", "type": "furniture", "name": "the narrow bed", "x": 2, "y": 7, "blocks": true },
+      { "id": "bed_big", "type": "furniture", "name": "the big bed", "x": 10, "y": 7, "blocks": true },
+      { "id": "wardrobe", "type": "furniture", "name": "the old wardrobe", "x": 12, "y": 6, "blocks": true }
+    ],
+    "rooms": [
+      { "id": "living_room", "name": "Kitchen and Living Room", "x": 1, "y": 1, "w": 12, "h": 4 },
+      { "id": "small_room", "name": "Small Bedroom", "x": 1, "y": 6, "w": 3, "h": 3 },
+      { "id": "big_room", "name": "Big Bedroom", "x": 5, "y": 6, "w": 8, "h": 3 },
+      { "id": "hall", "name": "Hall", "x": 1, "y": 9, "w": 12, "h": 2 }
+    ],
+    "start": { "x": 3, "y": 10 },
+    "spawns": {
+      "warner": [{ "x": 5, "y": 2 }, { "x": 8, "y": 4 }, { "x": 3, "y": 3 }, { "x": 11, "y": 4 }],
+      "finder": [{ "x": 6, "y": 7 }, { "x": 8, "y": 8 }, { "x": 2, "y": 9 }, { "x": 4, "y": 10 }]
+    }
+  },
+  {
+    "id": "loft_001",
+    "name": "The Loft",
+    "description": "An open loft: a living area with a kitchenette at the top and a sleeping area below, the front door to the south.",
+    "width": 12,
+    "height": 10,
+    "map": [
+      "############",
+      "#..........#",
+      "#..........#",
+      "#..........#",
+      "#..........#",
+      "#####..#####",
+      "#..........#",
+      "#..........#",
+      "#..........#",
+      "#####D######"
+    ],
+    "objects": [
+      { "id": "sofa", "type": "furniture", "name": "the low sofa", "x": 2, "y": 2, "blocks": true },
+      { "id": "table", "type": "furniture", "name": "the kitchen table", "x": 9, "y": 3, "blocks": true },
+      { "id": "counter", "type": "appliance", "name": "the kitchenette counter", "x": 10, "y": 1, "blocks": true },
+      { "id": "bed", "type": "furniture", "name": "the mattress bed", "x": 2, "y": 7, "blocks": true },
+      { "id": "wardrobe", "type": "furniture", "name": "the clothes rack", "x": 10, "y": 7, "blocks": true }
+    ],
+    "rooms": [
+      { "id": "living_room", "name": "Living Area", "x": 1, "y": 1, "w": 10, "h": 4 },
+      { "id": "sleeping_area", "name": "Sleeping Area", "x": 1, "y": 6, "w": 10, "h": 3 }
+    ],
+    "start": { "x": 6, "y": 8 },
+    "spawns": {
+      "warner": [{ "x": 4, "y": 3 }, { "x": 6, "y": 2 }, { "x": 8, "y": 4 }, { "x": 2, "y": 4 }],
+      "finder": [{ "x": 4, "y": 7 }, { "x": 7, "y": 7 }, { "x": 8, "y": 8 }, { "x": 3, "y": 8 }]
+    }
+  },
+  {
+    "id": "cottage_001",
+    "name": "The Cottage",
+    "description": "A small cottage: a parlour at the top, a little room and a bedroom below joined by a hall, the front door to the south.",
+    "width": 11,
+    "height": 11,
+    "map": [
+      "###########",
+      "#.........#",
+      "#.........#",
+      "#.........#",
+      "#.........#",
+      "###.#######",
+      "#...#.....#",
+      "#...#.....#",
+      "#...#.....#",
+      "#.........#",
+      "#####D#####"
+    ],
+    "objects": [
+      { "id": "sofa", "type": "furniture", "name": "the armchair", "x": 2, "y": 2, "blocks": true },
+      { "id": "table", "type": "furniture", "name": "the kitchen table", "x": 7, "y": 3, "blocks": true },
+      { "id": "stove", "type": "appliance", "name": "the iron stove", "x": 9, "y": 1, "blocks": true },
+      { "id": "bed", "type": "furniture", "name": "the cot", "x": 2, "y": 7, "blocks": true },
+      { "id": "wardrobe", "type": "furniture", "name": "the trunk", "x": 9, "y": 7, "blocks": true }
+    ],
+    "rooms": [
+      { "id": "living_room", "name": "Parlour", "x": 1, "y": 1, "w": 9, "h": 4 },
+      { "id": "little_room", "name": "Little Room", "x": 1, "y": 6, "w": 3, "h": 3 },
+      { "id": "bedroom", "name": "Bedroom", "x": 5, "y": 6, "w": 5, "h": 3 },
+      { "id": "hall", "name": "Hall", "x": 1, "y": 9, "w": 9, "h": 1 }
+    ],
+    "start": { "x": 4, "y": 9 },
+    "spawns": {
+      "warner": [{ "x": 5, "y": 2 }, { "x": 3, "y": 4 }, { "x": 8, "y": 4 }, { "x": 6, "y": 1 }],
+      "finder": [{ "x": 2, "y": 8 }, { "x": 7, "y": 7 }, { "x": 8, "y": 8 }, { "x": 6, "y": 9 }]
+    }
+  }
+]

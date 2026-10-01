@@ -1,0 +1,136 @@
+{
+  "themes": {
+    "shop": ["a counter", "a shelf", "a display case", "a crate", "a till"],
+    "food": ["a counter", "a stove", "a long table", "a barrel", "a bread rack"],
+    "workshop": ["a workbench", "a crate", "a tool rack", "a barrel", "a shelf"],
+    "chapel": ["a pew", "a candle stand", "a lectern", "a chest"],
+    "clinic": ["a cot", "a medicine cabinet", "a desk", "a screen"],
+    "lodging": ["a bed", "a wardrobe", "a desk", "a trunk", "a table"],
+    "office": ["a desk", "a filing cabinet", "a bench", "a counter", "a crate"],
+    "yard": ["a crate", "a barrel", "a coil of rope", "a workbench", "a stack of nets"],
+    "hall": ["a bench", "a ticket counter", "a timetable board", "a luggage cart"],
+    "home": ["a table", "a shelf", "a sofa", "a crate", "a cupboard"]
+  },
+  "districts": [
+    {
+      "id": "outdoor", "name": "the street", "description": "An open street between the houses.",
+      "width": 40, "height": 40,
+      "lots": [{ "id": "street_home", "x": 16, "y": 28, "w": 8, "h": 8, "door": { "x": 20, "y": 35 } }],
+      "buildings": [
+        { "id": "building_bakery", "name": "the bakery", "x": 3, "y": 3, "w": 7, "h": 6, "door": { "x": 6, "y": 8 }, "theme": "food" },
+        { "id": "building_store", "name": "the general store", "x": 15, "y": 4, "w": 8, "h": 5, "door": { "x": 18, "y": 8 }, "theme": "shop" },
+        { "id": "building_workshop", "name": "the workshop", "x": 28, "y": 4, "w": 8, "h": 6, "door": { "x": 31, "y": 9 }, "theme": "workshop" },
+        { "id": "building_chapel", "name": "the chapel", "x": 32, "y": 16, "w": 7, "h": 8, "door": { "x": 32, "y": 20 }, "theme": "chapel" },
+        { "id": "building_clinic", "name": "the clinic", "x": 4, "y": 28, "w": 7, "h": 7, "door": { "x": 7, "y": 28 }, "theme": "clinic" },
+        { "id": "building_inn", "name": "the inn", "x": 30, "y": 28, "w": 7, "h": 6, "door": { "x": 33, "y": 28 }, "theme": "lodging" }
+      ],
+      "exits": [
+        { "x": 20, "y": 0, "to": "district_market", "label": "the market road" },
+        { "x": 39, "y": 12, "to": "district_park", "label": "the park gate" },
+        { "x": 0, "y": 20, "to": "district_riverside", "label": "the riverside path" },
+        { "x": 20, "y": 39, "to": "district_station", "label": "the station road" }
+      ],
+      "scenery": [
+        { "kind": "tree", "name": "a tree", "points": [[12, 12], [27, 12], [12, 26], [27, 24], [20, 20], [24, 30]] }
+      ],
+      "rooms": [
+        { "id": "north_lane", "name": "the northern lane", "x": 12, "y": 2, "w": 14, "h": 10 },
+        { "id": "crossroads", "name": "the crossroads", "x": 14, "y": 14, "w": 12, "h": 12 },
+        { "id": "south_yard", "name": "the south yard", "x": 12, "y": 26, "w": 14, "h": 12 }
+      ]
+    },
+    {
+      "id": "district_market", "name": "the market", "description": "A paved market square with stalls, a fountain and a row of shopfronts.",
+      "width": 36, "height": 30,
+      "lots": [{ "id": "market_home", "x": 14, "y": 20, "w": 8, "h": 7, "door": { "x": 17, "y": 20 } }],
+      "buildings": [
+        { "id": "building_market_cafe", "name": "the cafe", "x": 3, "y": 3, "w": 7, "h": 6, "door": { "x": 6, "y": 8 }, "theme": "food" },
+        { "id": "building_market_pharmacy", "name": "the pharmacy", "x": 12, "y": 3, "w": 7, "h": 5, "door": { "x": 15, "y": 7 }, "theme": "shop" },
+        { "id": "building_market_bookshop", "name": "the bookshop", "x": 21, "y": 3, "w": 7, "h": 6, "door": { "x": 24, "y": 8 }, "theme": "shop" },
+        { "id": "building_market_laundromat", "name": "the laundromat", "x": 29, "y": 3, "w": 6, "h": 5, "door": { "x": 31, "y": 7 }, "theme": "workshop" },
+        { "id": "building_market_tailor", "name": "the tailor", "x": 3, "y": 19, "w": 7, "h": 6, "door": { "x": 6, "y": 19 }, "theme": "shop" },
+        { "id": "building_market_florist", "name": "the florist", "x": 26, "y": 19, "w": 7, "h": 6, "door": { "x": 29, "y": 19 }, "theme": "shop" }
+      ],
+      "exits": [{ "x": 18, "y": 29, "to": "outdoor", "label": "the street" }],
+      "scenery": [
+        { "kind": "stall", "name": "a market stall", "points": [[6, 13], [10, 13], [14, 13], [22, 13], [26, 13], [30, 13]] },
+        { "kind": "fountain", "name": "the fountain", "points": [[18, 13]] }
+      ],
+      "rooms": [
+        { "id": "shopfront_row", "name": "the shopfront row", "x": 2, "y": 2, "w": 33, "h": 8 },
+        { "id": "market_square", "name": "the market square", "x": 2, "y": 10, "w": 33, "h": 8 },
+        { "id": "lower_row", "name": "the lower row", "x": 2, "y": 18, "w": 33, "h": 10 }
+      ]
+    },
+    {
+      "id": "district_park", "name": "the park", "description": "A wide park of lawns, paths and old trees, with a pavilion and a boathouse.",
+      "width": 40, "height": 36,
+      "lots": [{ "id": "park_home", "x": 3, "y": 12, "w": 7, "h": 5, "door": { "x": 6, "y": 16 } }],
+      "buildings": [
+        { "id": "building_park_hut", "name": "the ranger hut", "x": 4, "y": 4, "w": 6, "h": 5, "door": { "x": 6, "y": 8 }, "theme": "office" },
+        { "id": "building_park_pavilion", "name": "the pavilion", "x": 16, "y": 5, "w": 9, "h": 6, "door": { "x": 20, "y": 10 }, "theme": "hall" },
+        { "id": "building_park_boathouse", "name": "the boathouse", "x": 30, "y": 22, "w": 7, "h": 6, "door": { "x": 30, "y": 25 }, "theme": "yard" },
+        { "id": "building_park_kiosk", "name": "the tea kiosk", "x": 5, "y": 27, "w": 5, "h": 5, "door": { "x": 7, "y": 27 }, "theme": "food" }
+      ],
+      "exits": [{ "x": 0, "y": 18, "to": "outdoor", "label": "the park gate" }],
+      "scenery": [
+        { "kind": "tree", "name": "a tree", "points": [[12, 8], [28, 8], [12, 28], [26, 30], [34, 12], [34, 16], [10, 22], [22, 28], [30, 16], [16, 30], [36, 6], [14, 14]] },
+        { "kind": "bench", "name": "a bench", "points": [[14, 18], [24, 18], [14, 22], [24, 22]] },
+        { "kind": "fountain", "name": "the fountain", "points": [[19, 20]] },
+        { "kind": "swing", "name": "a swing set", "points": [[30, 8], [33, 8]] }
+      ],
+      "rooms": [
+        { "id": "north_path", "name": "the north path", "x": 2, "y": 2, "w": 36, "h": 10 },
+        { "id": "great_lawn", "name": "the great lawn", "x": 11, "y": 12, "w": 22, "h": 12 },
+        { "id": "south_walk", "name": "the south walk", "x": 2, "y": 24, "w": 36, "h": 10 }
+      ]
+    },
+    {
+      "id": "district_riverside", "name": "the riverside", "description": "A working quay along the water, with boats, mooring posts and warehouses.",
+      "width": 44, "height": 28,
+      "lots": [{ "id": "riverside_home", "x": 30, "y": 17, "w": 8, "h": 7, "door": { "x": 33, "y": 17 } }],
+      "buildings": [
+        { "id": "building_river_boatyard", "name": "the boat yard", "x": 4, "y": 4, "w": 9, "h": 6, "door": { "x": 8, "y": 9 }, "theme": "yard" },
+        { "id": "building_river_tavern", "name": "the tavern", "x": 16, "y": 4, "w": 7, "h": 5, "door": { "x": 19, "y": 8 }, "theme": "food" },
+        { "id": "building_river_fishmonger", "name": "the fishmonger", "x": 24, "y": 4, "w": 7, "h": 5, "door": { "x": 27, "y": 8 }, "theme": "shop" },
+        { "id": "building_river_ferry", "name": "the ferry office", "x": 34, "y": 4, "w": 7, "h": 5, "door": { "x": 37, "y": 8 }, "theme": "office" },
+        { "id": "building_river_warehouse", "name": "the warehouse", "x": 4, "y": 17, "w": 9, "h": 7, "door": { "x": 8, "y": 17 }, "theme": "yard" }
+      ],
+      "exits": [{ "x": 43, "y": 14, "to": "outdoor", "label": "the riverside path" }],
+      "scenery": [
+        { "kind": "post", "name": "a mooring post", "points": [[6, 12], [12, 12], [18, 12], [24, 12], [30, 12], [36, 12]] },
+        { "kind": "boat", "name": "a rowing boat", "points": [[10, 14], [22, 14]] },
+        { "kind": "crates", "name": "a stack of crates", "points": [[16, 22], [20, 24]] }
+      ],
+      "rooms": [
+        { "id": "working_front", "name": "the working front", "x": 2, "y": 2, "w": 40, "h": 8 },
+        { "id": "quay", "name": "the quay", "x": 2, "y": 11, "w": 40, "h": 5 },
+        { "id": "back_lots", "name": "the back lots", "x": 2, "y": 16, "w": 40, "h": 10 }
+      ]
+    },
+    {
+      "id": "district_station", "name": "the station", "description": "A busy forecourt in front of the station, with buses, a hotel and a post office.",
+      "width": 38, "height": 34,
+      "lots": [{ "id": "station_home", "x": 15, "y": 22, "w": 7, "h": 7, "door": { "x": 18, "y": 22 } }],
+      "buildings": [
+        { "id": "building_station_diner", "name": "the diner", "x": 3, "y": 4, "w": 7, "h": 6, "door": { "x": 6, "y": 9 }, "theme": "food" },
+        { "id": "building_station_hall", "name": "the station hall", "x": 13, "y": 4, "w": 12, "h": 7, "door": { "x": 18, "y": 10 }, "theme": "hall" },
+        { "id": "building_station_post", "name": "the post office", "x": 28, "y": 4, "w": 7, "h": 6, "door": { "x": 31, "y": 9 }, "theme": "office" },
+        { "id": "building_station_hotel", "name": "the hotel", "x": 3, "y": 20, "w": 8, "h": 8, "door": { "x": 6, "y": 20 }, "theme": "lodging" },
+        { "id": "building_station_depot", "name": "the bus depot", "x": 26, "y": 22, "w": 9, "h": 7, "door": { "x": 30, "y": 22 }, "theme": "yard" }
+      ],
+      "exits": [{ "x": 19, "y": 0, "to": "outdoor", "label": "the station road" }],
+      "scenery": [
+        { "kind": "shelter", "name": "a bus shelter", "points": [[22, 15]] },
+        { "kind": "bench", "name": "a bench", "points": [[10, 14], [28, 14]] },
+        { "kind": "machine", "name": "a ticket machine", "points": [[16, 13]] },
+        { "kind": "lamp", "name": "a lamp post", "points": [[8, 17], [30, 17], [19, 17]] }
+      ],
+      "rooms": [
+        { "id": "station_front", "name": "the station front", "x": 2, "y": 2, "w": 34, "h": 9 },
+        { "id": "forecourt", "name": "the forecourt", "x": 2, "y": 11, "w": 34, "h": 8 },
+        { "id": "back_lots", "name": "the back lots", "x": 2, "y": 19, "w": 34, "h": 13 }
+      ]
+    }
+  ]
+}

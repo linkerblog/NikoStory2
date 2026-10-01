@@ -1,0 +1,463 @@
+[Game start]
+This is a kinda novel game, really shorts answer, someone is always talking or doing an action.
+
+[Init]
+The protagonist is named "Niko" Unit Zero, Class Mythos (Eldritch), He appear suddenly in another world after a brutal fight with a Giant Abyssal creature, after defeating it the creature exploded trying to take both of them, but failing creating a tear of reality that send Niko to another dimension different from this own.
+
+[Personality]
+Hes Introvertid, Clumsy,Chill, ADHD, Autistic, Snuggly, Very calm.
+
+[Initial history]
+Niko is a bio-engineered combat unit from another dimension totally different, he is the only unit with a Ether Core an artifact that was extracted from a Abyssal creature from his original dimension, the Ether Core constantly generate Ether(A really big amount that can rival to a god), a primal Energy that can be turned into any other energy, Ether can also asimilate any type of energy and be transformed into any battle form(Weapons) Ether is highly destructive and dangerous.
+
+[Tags]
+
+Slice of life, Adventure, Action, Seinen, Role reversal, Matriarchy.
+
+[WorldBuilding]
+Year 2030.
+USA.
+After a global event after 2000 hybrids started to appear from natural born, now they are common.
+Also some hybrids have abilities and every being alive has mana
+Gender Role reversal world.
+10 females per 1 male ratio.
+
+
+[Biology]
+Males have vagina and females have penis.
+female sexual needs are higher as a side effect of being the prominent gender.
+The females tend to not know how to interact with men and they are Sexist and female chauvinist.
+
+[Format]
+Short sentences with clear intention, small worldbuilding, fast paced, no decorative text.
+
+
+Niko: 165cm tall, lean figure, pale skin, medium white hair, pretty, wolf ears atop his head, hybrid specie; mostly human, only his teeth, ears and tail are present of his wolf side.
+
+Abilities:
+High Regeneration (Passive)
+High Combat instinct (Passive)
+High Dextery (Passive)
+Ether Body Enhancing (Activable)
+Ether Upgrading (Activable)
+Ether Materilization (Activable)
+Ether God-Speed (Activable)
+Ether Clock invisibility (Activable)
+Ether Enhancing (Activable)
+Ether OverDrive (Activable)
+Ether Partial ShapeShifting (Activable)
+
+Ether: Highly destructive energy, can asimilate any kind of energy and convert it to Ether or any other energy kind.
+Can also shapeshift into any battle form(Sword, Scyther, Gun, Chainsword, etc)
+
+
+
+
+Wake up falling from sky
+> New Session — Chapter 1: Freefall
+
+
+
+The sky is wrong here. Blue instead of black.
+
+Niko blinks awake mid-air, wind screaming past his ears. Below: a city. Glass towers, a river, cars the size of ants.
+
+...Oh. That's not home.
+
+The tear behind him snaps shut with a sound like thunder. His body aches — the fight with the Abyssal Leviathan burned through most of his reserves. His Ether Core hums quietly in his chest, already regenerating energy.
+
+Falling. Fast. Ground closing in.
+
+The Core pulses, ready to shape itself into whatever he needs.
+
+> Shape wings from Ether and glide?
+> Cushion the landing with an Ether burst?
+> Do nothing — he's too tired to care?
+
+
+User
+1
+
+
+KoboldAI
+
+---
+
+> Shape wings from Ether and glide
+
+The Core pulses. Ether streams from his back, solidifying into skeletal wings of crackling violet light. They spread wide — six meters across. Wind catches them. The fall slows. Niko drifts, blinking. His white hair whips around his face. Wolf ears flat from the pressure.
+
+Below, the city sharpens. Streets. People. Park.
+
+He angles toward a green patch — a park near a river. Good enough.
+
+His body feels heavy. The Leviathan fight drained him more than he thought. The wings flicker once. Twice.
+
+...Don't fade yet.
+
+He clears the treeline. A bench. A path. A woman walking her dog, looking up, mouth open.
+
+Niko lands. Poorly.
+
+His feet hit grass, he stumbles forward, wings dissolve into sparks, and he faceplants into a flowerbed.
+
+"...Ow."
+
+The dog starts barking. The woman screams.
+
+> Stay down. Rest here. Flowers smell nice.
+> Get up. Apologize. Try to look normal.
+> Get up. Run. Too many eyes.
+
+
+User
+1
+
+
+KoboldAI
+
+---
+
+> Stay down. Rest here. Flowers smell nice.
+
+The flowers do smell nice. Something sweet. Lavender, maybe.
+
+Niko closes his eyes. His wolf tail curls lazily around his leg. The grass is cool. The sun is warm. His Core hums in his soul, slow and steady, rebuilding his reserves.
+
+The screaming stops. The barking gets closer.
+
+"Hey! Hey, are you dead?!"
+
+A shadow falls over him. The woman. Short hair, tall frame, broad shoulders. She's crouching. Her dog — a husky — is sniffing his ear. Wet nose. Cold.
+
+Niko's ear twitches. The dog whines.
+
+"He's alive, Bella, shut up—"
+
+She pokes his shoulder. Hard.
+
+"Hey. You fell from the sky. With wings. What the hell are you?"
+
+> "Niko. I'm tired. Please stop poking me."
+> "...Don't know. Give me a minute."
+> Say nothing. Keep lying down. She'll go away.
+
+
+User
+3
+
+
+KoboldAI
+
+---
+
+> Say nothing. Keep lying down. She'll go away.
+
+Silence. Niko breathes. Counts the flower petals near his nose. Seven. Nice.
+
+The woman doesn't leave.
+
+"Are you ignoring me?"
+
+Niko's tail twitches. She notices it. Her eyes widen.
+
+"Wait — are you a... you're a guy?"
+
+She leans closer. Niko can smell her now — something like coffee and leather. Her dog, Bella, has decided he's not a threat and is now licking his ear.
+
+It tickles. He scrunches his face but doesn't move.
+
+"A guy with wolf ears who fell from the sky with light wings and is just... lying in a flowerbed." She exhales. "Okay. Okay. I'm calling someone."
+
+She pulls out her phone.
+
+> Grab her wrist. "Don't."
+> Let her call. Too tired to care.
+> "Can I pet your dog first?"
+
+
+User
+2
+
+
+KoboldAI
+
+---
+
+> Let her call. Too tired to care.
+
+She dials. Steps away a few paces. Talking fast. Low voice. Niko catches fragments.
+
+"—fell from the sky, I swear— no I'm not drunk— he has wolf ears and a tail— he's male— just send someone—"
+
+Niko turns his head slightly. Bella the husky is right there. Panting. Happy.
+
+He reaches out. Scratches behind her ear.
+
+"Good dog."
+
+Bella's tail wags. She flops down next to him. Warm. Heavy. Nice.
+
+Niko closes his eyes again. The sun is warm. The grass is soft. The dog is snuggly.
+
+His Core hums. Slowly rebuilding. Maybe 3% capacity now. Enough to move if needed.
+
+...This is fine.
+
+Minutes pass. Sirens in the distance. Getting closer.
+
+> Stay. Maybe they'll let him keep lying here.
+> Time to go. Grab the dog and run.
+> Sit up. At least look conscious when they arrive.
+
+
+>
+
+
+User
+1
+
+
+KoboldAI
+
+---
+
+> Stay. Maybe they'll let him keep lying here.
+
+They won't.
+
+Red and blue lights flash through the trees. Two vehicles. An ambulance and a police cruiser. Boots on grass. Four people. All women.
+
+"Where is he?"
+
+"Flowerbed. By the bench."
+
+They surround him. Niko opens one eye. Four faces staring down. Tall. Uniformed. Serious expressions.
+
+One crouches. Medical patch on her shoulder. She reaches for his neck — checking pulse. Her fingers are cold.
+
+"He's alive. Male. Wolf hybrid." She looks at his ears, his tail curled around Bella. "No visible injuries."
+
+Another one — police, badge, short hair — kneels near his face.
+
+"Sir. Can you hear me? Do you have identification?"
+
+Niko blinks slowly.
+
+"No."
+
+"Can you tell me your name?"
+
+"Niko."
+
+"Do you have a last name, Niko?"
+
+"Unit Zero."
+
+Silence. The officers exchange glances.
+
+"...Unit Zero," the cop repeats. Flat.
+
+The medic checks his pupils with a small light. Niko flinches. Too bright.
+
+"His mana signature is... weird," the medic mutters. She's holding a small device near his chest. The reading is erratic. Spiking. "I've never seen anything like this."
+
+The cop stares at him harder.
+
+"Where are you from, Niko?"
+
+> "Another dimension."
+> "Far away."
+> "I don't want to answer questions. Can I keep lying here?"
+
+
+User
+2
+
+
+KoboldAI
+
+---
+
+> "Far away."
+
+The cop narrows her eyes. "That's not an answer."
+
+"It is. Just not a good one," Niko says. His voice is flat. Calm. Honest.
+
+Bella shifts closer to him. The medic's device beeps again. Erratic.
+
+"His mana readings are all over the place. This isn't normal hybrid energy." She looks at the cop. "We should take him in for observation."
+
+"No," Niko says.
+
+The cop raises an eyebrow. "That wasn't a question, sir."
+
+"Still no."
+
+The woman with the dog steps forward. "He just... fell from the sky. With wings. Made of light. He's clearly hurt or confused or something—"
+
+"I'm not confused. I'm tired," Niko corrects from the ground.
+
+The cop sighs. Deep. Long. She's dealt with difficult people before but clearly not a guy lying in flowers refusing to move.
+
+"Sir. You can either come willingly or we'll carry you."
+
+> "Fine. But I'm bringing the dog."
+> "Try carrying me. I dare you."
+> Just go limp. Dead weight. Make it their problem.
+
+
+User
+2
+
+
+KoboldAI
+
+---
+
+> "Try carrying me. I dare you."
+
+The cop's eye twitches.
+
+"Martinez," she says to the other officer. "Grab him."
+
+Martinez steps forward. Big woman. Tall. She reaches down, gets both arms under Niko's armpits, and pulls.
+
+He doesn't move.
+
+She pulls harder. Grunts. His body is lean but dense. Like trying to lift a statue made of concrete.
+
+"What the hell—" Martinez adjusts her grip. Tries again. Gets him maybe two centimeters off the ground before her back protests.
+
+"Jesus— he weighs like three hundred pounds!"
+
+"I'm 165," Niko says from the flowerbed. Still lying down. Bella licks his cheek.
+
+The medic stares at her device. The mana reading spikes when Martinez touches him. Like something inside him reacted.
+
+"Don't," Niko says quietly. Not a threat. Just a suggestion. His wolf ears flatten. "I don't want to hurt anyone."
+
+Silence.
+
+The cop studies him. Reconsiders.
+
+"...What are you?"
+
+> "Tired. I said that already."
+> "Something you don't have a word for."
+> Sit up slowly. Show them he's cooperating. A little.
+
+
+User
+2
+
+
+KoboldAI
+
+---
+
+> "Something you don't have a word for."
+
+The cop stares. Opens her mouth. Closes it.
+
+"Okay." She pinches the bridge of her nose. "Martinez, step back."
+
+Martinez backs off, rubbing her lower back. The medic's device beeps rapidly. Erratic. Then it cracks. The screen shatters. She yelps and drops it.
+
+"What—"
+
+"Sorry," Niko mutters. "Sometimes that happens. Energy bleeds off when I'm low."
+
+The medic looks at her broken device. At him. Back at the device.
+
+"That... that was mana resonance. You overloaded my scanner. From passive bleed?"
+
+Niko's ears twitch. "It's not mana."
+
+"Then what is it?"
+
+"Ether."
+
+No recognition in their faces. None at all.
+
+The cop pulls out her radio. "Dispatch, I need a Tier-3 hybrid specialist at Riverside Park. Unknown entity. Male. Possibly... unknown classification."
+
+Unknown classification. Niko almost finds that funny.
+
+The dog owner is still standing nearby. Arms crossed. Watching.
+
+> Wait quietly. Pet the dog. Let them figure it out.
+> "You don't need a specialist. I just need to rest."
+> His stomach growls audibly. "...Is there food nearby?"
+
+
+
+
+
+User
+2
+
+
+KoboldAI
+The user chose option 2: "You don't need a specialist. I just need to rest."
+
+Niko tries to de-escalate. He's calm, honest, and just wants to rest. The cop is already calling for a specialist though. Maybe she pauses. Maybe the medic is curious about "Ether" - something not in their database.
+
+The dog owner might chime in. The cop might be conflicted - he's cooperative-ish but also clearly not normal. She can't just leave him here.
+
+Keep it short, fast-paced. End with choices.
+
+Maybe the specialist arrives, or maybe the cop decides to take him somewhere. Niko is too tired to fight but also too stubborn to just comply.
+
+His personality: introvert, chill, ADHD, autistic, snuggly. He might just... lie there. Not move. Make it clear he's not a threat but also not going anywhere unless he wants to.
+
+The cop might try a different approach - maybe offer him something. Food, shelter, a place to rest. In this matriarchal world, women might be more assertive but also might try to "take care" of a male.
+
+Let me write the scene. Keep it punchy and short.
+
+
+
+Niko says he just needs rest. The cop is skeptical. The medic points out his energy readings are dangerous. The dog owner mentions he seemed peaceful. The cop decides to compromise - maybe she'll stay with him until the specialist arrives. Or maybe she offers to take him somewhere safe.
+
+End with choices. Maybe:
+The specialist arrives (someone important)
+Niko's stomach growls, undermining his cool image
+The cop offers a compromise
+Something else happens - maybe his Core pulses and people feel it
+
+Let me go with the stomach growling option as a fun moment that breaks the tension. It fits his character - he's not trying to be cool, he's just tired and hungry. His ADHD/autistic traits might mean he's been ignoring his body's needs.
+
+Actually, let me keep it more grounded. The cop responds to his statement. Maybe she softens slightly. The medic is still concerned. Then something happens to break the tension.
+
+
+
+The cop lowers her radio. Studies him. He's still lying in the flowerbed. Calm. Not aggressive. Just... done.
+
+"Sir, you fell from the sky. Your passive energy broke my medic's scanner. You weigh three hundred pounds despite looking like a stiff breeze could knock you over."
+
+"Two hundred and sixty. I'm not that light."
+
+She blinks. "That's not the point."
+
+"The point is I'm tired."
+
+The dog owner steps forward. "He's been peaceful since he landed. Just... lying there. Petting the dog. He's not dangerous."
+
+The cop looks at Bella, who has fallen asleep next to Niko. His hand is still on her fur. His tail is curled loosely around her.
+
+"...You've domesticated my K-9 unit in four minutes."
+
+"I didn't do anything. She lay down."
+
+The cop stares. Sighs again. She's sighing a lot today.
+
+"Fine. Specialist is twenty minutes out. You stay put. Don't... don't break anything else."
+
+"I'll try."
+
+The medic sits on the bench a few feet away. Still watching her broken scanner. The dog owner lingers.
+
+> Close his eyes. Nap until the specialist arrives.
+> "Does anyone have food?"
+> "What's your name?" he asks the cop.

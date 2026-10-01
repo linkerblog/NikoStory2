@@ -5,6 +5,7 @@
     "zone_id": "house_001",
     "x": 6,
     "y": 3,
+    "on": "table",
     "data": {
       "portable": true,
       "description": "A folded sheet with Niko's name on the front.",
@@ -18,6 +19,7 @@
     "zone_id": "house_001",
     "x": 8,
     "y": 8,
+    "on": "wardrobe",
     "hidden": 1,
     "data": {
       "portable": true,

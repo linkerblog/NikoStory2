@@ -2,9 +2,9 @@ import type { Db } from "./db.js";
 
 // Every model call belongs to a role. Each role has its own model, reasoning flag and idle timeout,
 // so quality can be tuned per job without a global switch. The spend cap stays global.
-export type LlmRole = "interpreter" | "narrator" | "architect" | "continuity" | "memory" | "npc" | "cast";
+export type LlmRole = "interpreter" | "narrator" | "architect" | "continuity" | "memory" | "npc" | "cast" | "government";
 
-export const LLM_ROLES: LlmRole[] = ["interpreter", "narrator", "architect", "continuity", "memory", "npc", "cast"];
+export const LLM_ROLES: LlmRole[] = ["interpreter", "narrator", "architect", "continuity", "memory", "npc", "cast", "government"];
 
 export interface RoleConfig { model: string; reasoning: boolean; idleMs: number }
 export interface LlmConfig {

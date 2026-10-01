@@ -5,17 +5,95 @@
     "Mireille", "Orin", "Perrin", "Quill", "Rune", "Soren", "Thea", "Wren"
   ],
   "temperaments": [
-    { "personality": "stern and watchful", "voice": "Terse and level; says only what matters." },
-    { "personality": "warm and scatterbrained", "voice": "Rambles kindly, loses the thread, then laughs at it." },
-    { "personality": "dry and sarcastic", "voice": "Deadpan remarks; never raises the voice." },
-    { "personality": "shy and observant", "voice": "Soft-spoken, hesitates, trails off at the end of a sentence." },
-    { "personality": "bold and impatient", "voice": "Fast and loud; interrupts and pushes for an answer." },
-    { "personality": "gentle and dreamy", "voice": "Slow, lyrical phrasing that drifts into small tangents." },
-    { "personality": "suspicious and guarded", "voice": "Answers a question with a question and weighs every word." },
-    { "personality": "cheerful and nosy", "voice": "Bright and eager; asks many questions and shares what was overheard." },
-    { "personality": "gruff and protective", "voice": "Grumbles, then softens; short orders disguised as advice." },
-    { "personality": "calm and methodical", "voice": "Measured and precise; lists things in order." }
+    { "personality": "stern and watchful", "voice": "Terse and level; says only what matters.",
+      "bearing": "shadow",
+      "depth": {
+        "traits": ["watchful", "exacting", "loyal"],
+        "quirk": "Checks the doors and windows of any room before sitting down.",
+        "fear": "Being caught off guard with no way out.",
+        "backstory": "Spent years as a night guard at a freight depot and never quite stopped counting who comes and goes."
+      } },
+    { "personality": "warm and scatterbrained", "voice": "Rambles kindly, loses the thread, then laughs at it.",
+      "bearing": "companion",
+      "depth": {
+        "traits": ["warm", "forgetful", "generous"],
+        "quirk": "Pats pockets for keys that are already in hand.",
+        "fear": "Letting someone down by forgetting something important.",
+        "backstory": "Ran a small bakery that always smelled of burnt sugar; still hands out spare food to anyone who looks tired."
+      } },
+    { "personality": "dry and sarcastic", "voice": "Deadpan remarks; never raises the voice.",
+      "bearing": "stays",
+      "depth": {
+        "traits": ["dry", "sharp", "tired"],
+        "quirk": "Answers a compliment with a raised eyebrow and a flat joke.",
+        "fear": "Being pitied.",
+        "backstory": "Worked a clinic front desk through too many long shifts; has heard every excuse and believes none of them."
+      } },
+    { "personality": "shy and observant", "voice": "Soft-spoken, hesitates, trails off at the end of a sentence.",
+      "bearing": "shy",
+      "depth": {
+        "traits": ["shy", "observant", "gentle"],
+        "quirk": "Straightens whatever is nearest when nervous: a cup, a sleeve, a chair.",
+        "fear": "Being the center of attention.",
+        "backstory": "Grew up in a crowded apartment and learned to read people from the corner of a room."
+      } },
+    { "personality": "bold and impatient", "voice": "Fast and loud; interrupts and pushes for an answer.",
+      "bearing": "shadow",
+      "depth": {
+        "traits": ["bold", "restless", "blunt"],
+        "quirk": "Taps a foot or a finger until the other person finishes.",
+        "fear": "Being stuck waiting while something happens elsewhere.",
+        "backstory": "Used to race delivery routes across the city and still treats every errand like a deadline."
+      } },
+    { "personality": "gentle and dreamy", "voice": "Slow, lyrical phrasing that drifts into small tangents.",
+      "bearing": "trailing",
+      "depth": {
+        "traits": ["gentle", "dreamy", "kind"],
+        "quirk": "Hums half a tune and stops mid-phrase.",
+        "fear": "Losing the quiet places that feel safe.",
+        "backstory": "Spent school years sketching skylines in the margins and still carries a battered notebook."
+      } },
+    { "personality": "suspicious and guarded", "voice": "Answers a question with a question and weighs every word.",
+      "bearing": "lingers",
+      "depth": {
+        "traits": ["wary", "guarded", "shrewd"],
+        "quirk": "Keeps a hand on a bag or a pocket and glances at every stranger's hands.",
+        "fear": "Being cheated or lied to again.",
+        "backstory": "Was burned once by a rental deal that went bad and now reads every smile for a motive."
+      } },
+    { "personality": "cheerful and nosy", "voice": "Bright and eager; asks many questions and shares what was overheard.",
+      "bearing": "companion",
+      "depth": {
+        "traits": ["cheerful", "nosy", "sociable"],
+        "quirk": "Repeats the last words of a sentence as a question to draw out more.",
+        "fear": "Missing news that everyone else already knows.",
+        "backstory": "Knows every neighbour on the block by name and by gossip, from years behind the counter of a corner market."
+      } },
+    { "personality": "gruff and protective", "voice": "Grumbles, then softens; short orders disguised as advice.",
+      "bearing": "shadow",
+      "depth": {
+        "traits": ["gruff", "protective", "steady"],
+        "quirk": "Grumbles an order, then slides a drink or a blanket across without a word.",
+        "fear": "Failing to protect someone who trusted them.",
+        "backstory": "Coached a youth team for years and still treats anyone younger as one of the players."
+      } },
+    { "personality": "calm and methodical", "voice": "Measured and precise; lists things in order.",
+      "bearing": "trailing",
+      "depth": {
+        "traits": ["calm", "methodical", "patient"],
+        "quirk": "Lists the steps aloud, first, second, third, even for small tasks.",
+        "fear": "A plan falling apart with no way to fix it.",
+        "backstory": "Kept the records of a small workshop and learned that most disasters start as one skipped step."
+      } }
   ],
+  "bearings": {
+    "shadow": { "mode": "follow", "range": 2, "leash": 12, "prob": 1.0, "word": "stays a step or two behind Niko and never takes the eyes off him" },
+    "companion": { "mode": "follow", "range": 2, "leash": 10, "prob": 0.8, "word": "walks along with Niko, close enough to talk" },
+    "trailing": { "mode": "follow", "range": 4, "leash": 8, "prob": 0.6, "word": "trails a few steps behind Niko, as if by chance" },
+    "shy": { "mode": "follow", "range": 5, "leash": 8, "prob": 0.5, "word": "keeps a shy distance but never loses sight of Niko" },
+    "lingers": { "mode": "linger", "range": 5, "leash": 8, "prob": 0.4, "word": "stays around the place and keeps an eye on Niko without following" },
+    "stays": { "mode": "stay", "range": 1, "leash": 1, "prob": 0, "word": "goes about its own business and does not follow Niko" }
+  },
   "slots": [
     {
       "role": "warner",

@@ -16,8 +16,11 @@ import { describeEffect, keywordsOf, type Effect, type Interpretation, type Inte
 import type { NpcContext, NpcDecision, NpcDecider } from "./npc.js";
 import type { Action, Dir, ItemRef, ItemVerb, ReplyChoice } from "./actions.js";
 import { readItems, type Item } from "./items.js";
-import type { CastWriter } from "./cast.js";
+import { readBearing, readDepth, type Bearing, type CastWriter } from "./cast.js";
 import { healthBand, mitigate, publicData, rollBlow, vitalsOf, type Vitals } from "./combat.js";
+import { readGovernment, type Government, type GovernmentData, type GovernmentWriter, type ProtocolStep } from "./government.js";
+import { compileWorld, publicWorld, readWorldDoc } from "./worlddoc.js";
+import { IncidentStore, incidentTags, stepIsDue, type Incident, type Scheduled } from "./incidents.js";
 
 export type { Action, Dir, ItemVerb, ReplyChoice } from "./actions.js";
 export { parseFreeAction } from "./actions.js";
@@ -48,6 +51,9 @@ export interface EngineServices {
   // Optional: writes the personality and voice of a new game's cast. Without it (offline, tests) the
   // generated temperaments from `data/cast.json` stand. Used by `reset` in `src/game.ts`, not by turns.
   castwriter?: CastWriter;
+  // Optional: writes the city and the government of a new game. Without it (offline, tests) the
+  // deterministic government from `data/government.json` stands. Used by `reset`, not by turns.
+  governor?: GovernmentWriter;
 }
 
 // A conversation is between two participants. `npc_id` is legacy (kept for the NOT NULL of old rows)
@@ -99,6 +105,8 @@ export class Engine {
   private pendingMemory: MemoryEvent[] = [];
   // NPCs that already asked the decider this player turn, so a multi-effect turn never multiplies calls.
   private npcProposed = new Set<string>();
+  // Assigned in the constructor body: a field initializer would run before the `db` parameter property.
+  private incidents: IncidentStore;
 
   constructor(
     private db: Db,
@@ -110,7 +118,12 @@ export class Engine {
     private scene: Scene = { question: "", facts: [] },
     private opening: Opening = DEFAULT_OPENING,
     private world: WorldFacts = DEFAULT_WORLD,
-  ) {}
+    // Pools the responders draw their surnames from. Without it no step can name a responder, so no
+    // incident is ever raised.
+    private govData?: GovernmentData,
+  ) {
+    this.incidents = new IncidentStore(db);
+  }
 
   private get narrator(): Narrator { return this.services.narrator; }
 
@@ -194,7 +207,7 @@ export class Engine {
   // The event is born with its witnesses: only those who could see it "know" it. The event and its
   // witnesses commit together; memories for the wording-matters kinds are written later, still
   // append-only, and every witness always ends up with one (the template is the fallback).
-  private record(type: string, x: number, y: number, actor: string | null, data: object, withWitnesses: boolean): void {
+  private record(type: string, x: number, y: number, actor: string | null, data: object, withWitnesses: boolean): number {
     const tick = this.tick();
     const z = this.zone;
     const here = this.ents().filter((e) => e.zone_id === z.id);
@@ -206,8 +219,9 @@ export class Engine {
       ? here.filter((e) => canSee(z, e, { x, y })).map((e) => e.id)
       : [];
     const base: Omit<MemoryEvent, "id"> = { tick, zone_id: z.id, type, actor_id: actor, x, y, data, names, witnesses };
+    let eventId = 0;
     this.db.transaction(() => {
-      const id = Number(
+      const id = eventId = Number(
         this.db.prepare("INSERT INTO events (tick, zone_id, type, actor_id, x, y, data) VALUES (?, ?, ?, ?, ?, ?, ?)")
           .run(tick, z.id, type, actor, x, y, JSON.stringify(data)).lastInsertRowid,
       );
@@ -227,6 +241,7 @@ export class Engine {
         insMemory.run(m.character_id, m.event_id, m.tick, m.zone_id, m.text, m.importance, JSON.stringify(m.participants));
       }
     })();
+    return eventId;
   }
 
   // Where a mover appears when entering `zone` from `fromId`: the walkable tile next to the zone's
@@ -243,6 +258,15 @@ export class Engine {
       for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
         if (freeAt(q.x + dx, q.y + dy)) return { x: q.x + dx, y: q.y + dy };
       }
+      // Someone already stands on the tile beside the door (Niko, a follower just ahead): the next free tile
+      // around it, so a late arrival is never put on the far side of the zone.
+      for (let r = 1; r <= 3; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) === r && freeAt(q.x + dx, q.y + dy)) return { x: q.x + dx, y: q.y + dy };
+          }
+        }
+      }
     }
     for (let y = 0; y < zone.height; y++) for (let x = 0; x < zone.width; x++) if (freeAt(x, y)) return { x, y };
     return { x: 1, y: 1 };
@@ -250,14 +274,14 @@ export class Engine {
 
   // The engine asks the architect for a building; the model proposes, the engine decides. A missing,
   // invalid or over-budget draft is replaced by the deterministic generator, so play never stops.
-  private async buildZone(portal: Portal): Promise<Zone> {
-    const spec = buildingSpec(portal);
+  private async buildZone(portal: Portal, parent: Zone): Promise<Zone> {
+    const spec = buildingSpec(portal, parent, portal.theme ? this.zones.themes[portal.theme] : undefined);
     const fallback = generateBuilding(this.seed(), spec);
     if (!this.narrator.generateZone) return fallback;
     try {
       const draft = await this.narrator.generateZone({
         id: spec.id, name: spec.name, kind: "building", width: spec.width, height: spec.height,
-        entry: spec.entry, tick: this.tick(), world: this.world,
+        entry: spec.entry, tick: this.tick(), world: this.openWorld(),
       });
       return validateZoneDraft(draft, spec) ?? fallback;
     } catch {
@@ -269,16 +293,52 @@ export class Engine {
     const from = this.zone;
     let target = this.zones.get(portal.to);
     if (!target) {
-      target = await this.buildZone(portal);
+      target = await this.buildZone(portal, from);
       this.zones.put(target);
       notable.push(`Niko enters ${target.name}.`);
     } else {
       notable.push(`Niko goes through to ${target.name}.`);
     }
     const spot = this.entryTile(target, from.id, niko);
+    this.startTrails(from, portal, niko, target);
     this.setZone(niko, target, spot.x, spot.y);
-    this.record("enter", spot.x, spot.y, "niko", { from: from.id, to: target.id, label: portal.label }, true);
+    const entered = this.record("enter", spot.x, spot.y, "niko", { from: from.id, to: target.id, label: portal.label }, true);
+    this.rollSightings(target, entered);
     setMeta(this.db, "visible", JSON.stringify(this.visibleActors(niko, this.ents()).map((e) => e.id).sort()));
+  }
+
+  // Characters that walk after Niko mark the door he took: when they would have reached it they step through
+  // after him (`runTrails`). The mark lives in the character data, so it needs no table, and it is hidden
+  // from every prompt like the other raw keys.
+  private startTrails(from: Zone, portal: Portal, niko: Ent, target: Zone): void {
+    const tick = this.tick();
+    for (const npc of this.ents()) {
+      if (npc.type !== "npc" || npc.zone_id !== from.id || this.isDown(npc)) continue;
+      const b = readBearing(npc.data);
+      if (!b || b.mode !== "follow" || chebyshev(npc, niko) > b.leash) continue;
+      npc.data.trail = { to: target.id, due: tick + Math.max(1, chebyshev(npc, portal)) };
+      this.saveData(npc);
+    }
+  }
+
+  // A trail ends when it falls due. If Niko is still where the character was heading it arrives beside the
+  // door, a short walk behind him; if he has moved on or come back, it simply stops following.
+  private runTrails(tick: number, notable: string[]): void {
+    const ents = this.ents();
+    const niko = ents.find((e) => e.id === "niko")!;
+    for (const npc of ents.filter((e) => e.type === "npc" && e.data?.trail)) {
+      const trail = npc.data.trail as { to: string; due: number };
+      if (trail.due > tick) continue;
+      delete npc.data.trail;
+      const target = this.zones.get(trail.to);
+      if (!target || this.isDown(npc) || trail.to !== niko.zone_id || npc.zone_id === niko.zone_id) { this.saveData(npc); continue; }
+      const fromId = npc.zone_id;
+      const spot = this.entryTile(target, fromId, npc);
+      this.setZone(npc, target, spot.x, spot.y);
+      this.saveData(npc);
+      this.record("enter", spot.x, spot.y, npc.id, { from: fromId, to: target.id, label: "the door" }, true);
+      notable.push(`${npc.name} comes in after Niko.`);
+    }
   }
 
   // The two participants of a conversation, tolerating a legacy row that predates migration 6.
@@ -497,9 +557,9 @@ export class Engine {
       : { name: this.zone.name, description: this.zone.description, room: roomAt(this.zone, niko.x, niko.y) };
     const n = await this.narrator.narrate({
       tick: this.tick(),
-      sheet: this.publicSheet(niko),
+      sheet: this.nikoSheet(niko),
       place,
-      world: this.world,
+      world: this.worldFacts(),
       arrival,
       visible: visible.map((e) => ({
         name: e.name,
@@ -554,7 +614,8 @@ export class Engine {
     return {
       text,
       tick: this.tick(),
-      sheet: this.publicSheet(niko),
+      sheet: this.nikoSheet(niko),
+      world: this.openWorld(),
       ether: Number(niko.data.ether ?? 0),
       etherMax: Number(niko.data.ether_max ?? 0),
       rules: this.rules,
@@ -944,6 +1005,7 @@ export class Engine {
           "INSERT INTO conversations (npc_id, goal_id, status, beat, started_tick, initiator_id, listener_id) VALUES (?, ?, 'open', 0, ?, 'niko', ?)",
         ).run(t.id, agenda?.goal_id ?? "none", this.tick(), t.id);
         this.record("talk", niko.x, niko.y, "niko", { target: t.id, beat: 0 }, true);
+        if (typeof t.data.incident === "number") this.incidents.contact(t.data.incident);
         notable.push(`Niko talks to ${t.name}.`);
         return { ok: true, notable };
       }
@@ -1071,9 +1133,165 @@ export class Engine {
       this.db.prepare("UPDATE entities SET data = ? WHERE id = 'niko'").run(JSON.stringify(niko.data));
     }
     setMeta(this.db, "visible", JSON.stringify(this.visibleActors(niko, ents).map((e) => e.id).sort()));
-    this.record("arrives", tile.x, tile.y, "niko", { impact, choices }, true);
+    const arrival = this.record("arrives", tile.x, tile.y, "niko", { impact, choices }, true);
+    this.raiseIncident(arrival);
     this.pendingImpact = impact;
     notable.push(`Niko lands in ${roomAt(z, tile.x, tile.y)}.`);
+  }
+
+  // The worldbuilding as the roles read it. The World tab's edit wins over the file's default and is read
+  // on every call, so it applies to the next prompt with no restart. The invented city rides along, and a
+  // legacy save without a government reads exactly as before.
+  private worldFacts(): WorldFacts {
+    const doc = readWorldDoc(this.db);
+    const base = doc ? compileWorld(doc) : this.world;
+    const gov = readGovernment(this.db);
+    return gov ? { ...base, city: gov.city } : base;
+  }
+
+  // The world as anyone in it would know it: without Niko's own origin and nature.
+  private openWorld(): WorldFacts { return publicWorld(this.worldFacts()); }
+
+  // Niko's sheet with the personality the author wrote in the World tab; an empty one keeps the data file's.
+  private nikoSheet(niko: Ent): Record<string, unknown> {
+    const personality = this.worldFacts().protagonist?.personality;
+    return personality ? { ...this.publicSheet(niko), personality } : this.publicSheet(niko);
+  }
+
+  // A report needs somebody to make it: a named witness other than the subject or one of the unnamed
+  // bystanders of the zone kind. Each rolls once against `reportChance`; the first success fixes the
+  // report, and its delay is drawn from its own key so adding a bystander never shifts it.
+  private rollReport(key: string, tick: number, bystanders: number): number | null {
+    const rules = this.rules.incidents;
+    for (let i = 0; i < bystanders; i++) {
+      if (rngFor(this.seed(), tick, `${key}:${i}`)() >= rules.reportChance) continue;
+      const [min, max] = rules.reportDelay;
+      return min + Math.floor(rngFor(this.seed(), tick, `${key}:delay`)() * (max - min + 1));
+    }
+    return null;
+  }
+
+  private namedWitnesses(eventId: number): string[] {
+    return (this.db.prepare("SELECT character_id FROM witnesses WHERE event_id = ? AND character_id != 'niko'")
+      .all(eventId) as { character_id: string }[]).map((r) => r.character_id);
+  }
+
+  // The landing is the first thing the world can react to. With no government in the save (a legacy
+  // one) nothing is raised, so older games play exactly as they did.
+  private raiseIncident(arrivalEventId: number): void {
+    if (!this.govData || !readGovernment(this.db)) return;
+    const z = this.zone;
+    const tick = this.tick();
+    const witnesses = this.namedWitnesses(arrivalEventId).length;
+    const delay = this.rollReport("report:arrival", tick, witnesses + (this.rules.incidents.ambient[z.kind] ?? 0));
+    const incident = this.incidents.create("arrival", z.id, tick, incidentTags(this.fallBrace()), delay === null ? "unreported" : "pending");
+    if (delay !== null) this.incidents.schedule(tick + delay, "report", incident.id);
+  }
+
+  // While a report is live, entering a zone can be noticed: the same roll runs for the new zone and a
+  // success moves the place the institution believes Niko is in. A responder who sees him is certain.
+  private rollSightings(target: Zone, enteredEventId: number): void {
+    const tick = this.tick();
+    const live = this.incidents.reported().filter((i) => i.last_zone !== target.id && !this.incidents.hasPending("sighting", i.id, target.id));
+    if (!live.length) return;
+    const ents = this.ents();
+    const witnesses = this.namedWitnesses(enteredEventId);
+    for (const inc of live) {
+      const certain = witnesses.some((id) => ents.find((e) => e.id === id)?.data?.incident === inc.id);
+      const delay = certain
+        ? this.rules.incidents.reportDelay[0]
+        : this.rollReport(`sight:${inc.id}:${target.id}`, tick, witnesses.length + (this.rules.incidents.ambient[target.kind] ?? 0));
+      if (delay !== null) this.incidents.schedule(tick + delay, "sighting", inc.id, { zone: target.id });
+    }
+  }
+
+  // The queue, in (due tick, queue order). A report queues the whole protocol relative to itself; a step
+  // is judged when it fires, because contact and tags change while it waits.
+  private runScheduled(tick: number, notable: string[]): void {
+    const due = this.incidents.due(tick);
+    if (!due.length) return;
+    const gov = readGovernment(this.db);
+    for (const ev of due) {
+      const inc = this.incidents.get(ev.incident_id);
+      if (!inc || !gov) { this.incidents.settle(ev.id, "skipped"); continue; }
+      this.runScheduledEvent(ev, inc, gov, tick, notable);
+    }
+  }
+
+  private runScheduledEvent(ev: Scheduled, inc: Incident, gov: Government, tick: number, notable: string[]): void {
+    switch (ev.kind) {
+      case "report":
+        this.incidents.markReported(inc.id, tick);
+        gov.protocol.forEach((s, i) => this.incidents.schedule(tick + s.after, "step", inc.id, { step: i }));
+        this.incidents.settle(ev.id, "done");
+        return;
+      case "sighting":
+        if (inc.status === "reported" && typeof ev.payload.zone === "string" && this.zones.get(ev.payload.zone)) {
+          this.incidents.setLast(inc.id, ev.payload.zone, tick);
+        }
+        this.incidents.settle(ev.id, "done");
+        return;
+      case "step": {
+        const step = gov.protocol[Number(ev.payload.step)];
+        if (!step || !stepIsDue(step, inc)) { this.incidents.settle(ev.id, "skipped"); return; }
+        this.dispatch(gov, inc, step, Number(ev.payload.step), tick, notable);
+        this.incidents.settle(ev.id, "done");
+      }
+    }
+  }
+
+  // Where a responder appears: through the door of an indoor zone, exactly where Niko would appear, or at
+  // the far edge of an outdoor one. Never inside a wall, never on someone.
+  private responderTile(zone: Zone, niko: Ent, ents: Ent[]): Point | null {
+    if (zone.kind === "outdoor") {
+      const open = (x: number, y: number) => zone.map[y][x] === "." &&
+        !zone.objects.some((o) => o.blocks && o.x === x && o.y === y) &&
+        !ents.some((e) => e.zone_id === zone.id && e.x === x && e.y === y);
+      const from = niko.zone_id === zone.id ? niko : { x: Math.floor(zone.width / 2), y: Math.floor(zone.height / 2) };
+      // Strictly greater: a tie keeps the first tile found, so every run picks the same one.
+      let best: Point | null = null, far = -1;
+      for (let y = 0; y < zone.height; y++) {
+        for (let x = 0; x < zone.width; x++) {
+          if (open(x, y) && chebyshev(from, { x, y }) > far) { far = chebyshev(from, { x, y }); best = { x, y }; }
+        }
+      }
+      return best;
+    }
+    const parent = zone.portals?.[0]?.to;
+    return parent ? this.entryTile(zone, parent, { id: "" } as Ent) : null;
+  }
+
+  // A fired step makes its cue felt and puts its responders on the grid as ordinary NPCs: same tiles,
+  // same perception, same conversations as everyone else. They go to where the institution last placed
+  // Niko, whether or not he is still there.
+  private dispatch(gov: Government, inc: Incident, step: ProtocolStep, index: number, tick: number, notable: string[]): void {
+    const inst = gov.institutions.find((i) => i.id === step.institution);
+    const zone = this.zones.get(inc.last_zone);
+    if (!inst || !zone || !this.govData) return;
+    notable.push(step.cue);
+    for (let u = 0; u < step.units; u++) {
+      const ents = this.ents();
+      const niko = ents.find((e) => e.id === "niko")!;
+      const spot = this.responderTile(zone, niko, ents);
+      if (!spot) continue;
+      const used = new Set(ents.map((e) => e.name));
+      const free = this.govData.surnames.filter((s) => !used.has(`${inst.title} ${s}`));
+      const pool = free.length ? free : this.govData.surnames;
+      const name = `${inst.title} ${pool[Math.floor(rngFor(this.seed(), tick, `unit:${inc.id}:${index}:${u}`)() * pool.length)]}`;
+      const id = `unit_${inc.id}_${index}_${u}`;
+      const want = step.want.includes("{name}") ? step.want.replaceAll("{name}", name) : `${name}: ${step.want}`;
+      this.db.prepare("INSERT INTO entities (id, type, name, zone_id, x, y, data) VALUES (?, 'npc', ?, ?, ?, ?, ?)").run(
+        id, name, zone.id, spot.x, spot.y, JSON.stringify({
+          personality: `${inst.title} of ${inst.name}`, voice: inst.tone,
+          role: "responder", institution: inst.id, incident: inc.id,
+          agenda: { goal_id: `respond_${inc.id}_${index}_${u}`, kind: "approach", target: "niko", want },
+        }),
+      );
+      // `record` stamps Niko's zone, so the arrival is an event only for the zone Niko is standing in.
+      if (zone.id === niko.zone_id) {
+        this.record("enter", spot.x, spot.y, id, { from: zone.portals?.[0]?.to ?? "outside", to: zone.id, label: "the door" }, true);
+      }
+    }
   }
 
   // One world step: the tick, Ether regen, NPC agendas and the change in Niko's field of view. Used
@@ -1084,6 +1302,8 @@ export class Engine {
     const tick = this.tick() + 1;
     setMeta(this.db, "tick", String(tick));
     this.recoverAndRegen(tick, notable);
+    this.runScheduled(tick, notable);
+    this.runTrails(tick, notable);
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
     const d = niko.data;
@@ -1102,8 +1322,14 @@ export class Engine {
       if (await this.npcTurn(npc, ents, notable, convo)) continue;
       if (convo) continue; // an NPC conversation with no decision waits for this actor's turn
       const agenda = this.agendaOf(npc);
+      const bearing = readBearing(npc.data);
       if (agenda) {
         const row = this.ensureAgenda(npc, agenda);
+        // Someone who was waiting to speak to Niko takes the chase up again when he walks off.
+        if (bearing && row.status === "arrived" && agenda.kind !== "visit") {
+          const goal = goalPoint(agenda, ents, z);
+          if (goal && !reached(agenda, npc, goal)) { this.setAgenda(npc.id, "active"); row.status = "active"; }
+        }
         if (row.status === "active" || row.status === "blocked") {
           const goal = goalPoint(agenda, ents, z);
           if (goal && reached(agenda, npc, goal)) {
@@ -1125,8 +1351,14 @@ export class Engine {
           // keeps retrying above, so a path that opens later is resumed instead of dead-ending.
           if (row.status === "active") this.setAgenda(npc.id, "blocked");
         }
-        if (row.status === "arrived" || row.status === "done") continue;
+        if (row.status === "arrived" || row.status === "done") {
+          // An errand over, a character with a bearing keeps its own company with Niko. One that only had to
+          // visit an object is done with the object once it got there.
+          if (bearing && (row.status === "done" || agenda.kind === "visit")) this.bearingStep(npc, niko, ents, tick, bearing);
+          continue;
+        }
       }
+      if (bearing && this.bearingStep(npc, niko, ents, tick, bearing)) continue;
       const routine = npc.data.routine;
       if (routine?.type !== "wander") continue;
       const rng = rngFor(this.seed(), tick, npc.id);
@@ -1148,6 +1380,36 @@ export class Engine {
     }
     setMeta(this.db, "visible", JSON.stringify(now));
     return notable;
+  }
+
+  // Where a character with a bearing stands in relation to Niko. Everything is an ordinary move: the same
+  // path search, the same free-tile check and the same `move` event as anyone, with the chance of acting drawn
+  // from the seeded stream. Returns true when the bearing took the turn, false to let the wander routine run.
+  private bearingStep(npc: Ent, niko: Ent, ents: Ent[], tick: number, b: Bearing): boolean {
+    if (b.mode === "stay") return false;
+    const z = this.zone;
+    const gap = chebyshev(npc, niko);
+    const rng = rngFor(this.seed(), tick, `bearing:${npc.id}`);
+    if (gap > b.range) {
+      if (b.mode === "linger" && gap > b.leash) return false; // too far to care: back to its own business
+      if (rng() >= b.prob) return true;                       // it hesitates this tick
+      const step = bfsStep(z, npc, niko, (x, y) => this.free(x, y, ents));
+      if (!step || (step.x === niko.x && step.y === niko.y) || !this.free(step.x, step.y, ents)) return false;
+      const dir = deltaDir(step.x - npc.x, step.y - npc.y);
+      this.moveTo(npc, step.x, step.y);
+      this.record("move", step.x, step.y, npc.id, { dir }, true);
+      return true;
+    }
+    // Close enough: a small drift now and then, so company is not a statue.
+    if (rng() < 0.25) {
+      const dir = (["N", "S", "E", "W"] as Dir[])[Math.floor(rng() * 4)];
+      const nx = npc.x + DIR[dir][0], ny = npc.y + DIR[dir][1];
+      if (this.free(nx, ny, ents) && chebyshev({ x: nx, y: ny }, niko) <= Math.max(b.range, 1)) {
+        this.moveTo(npc, nx, ny);
+        this.record("move", nx, ny, npc.id, { dir }, true);
+      }
+    }
+    return true;
   }
 
   // The `npc` role decides one actor's action. Returns true when the actor acted (a valid effect was
@@ -1189,29 +1451,38 @@ export class Engine {
     const partnerId = convo ? this.participants(convo).find((p) => p !== npc.id) : undefined;
     const partner = partnerId ? ents.find((e) => e.id === partnerId) : undefined;
     const agenda = this.agendaOf(npc);
+    const seen = ents.filter((e) => e.zone_id === z.id && e.id !== npc.id && canSee(z, npc, e));
+    // The same ranked recall Niko's narration uses: what this character witnessed, scored against who is
+    // here now and what its own goal is about.
+    const query: MemoryQuery = {
+      characterId: npc.id, tick: this.tick(), zoneId: z.id,
+      presentCharacters: seen.map((e) => e.id), keywords: keywordsOf(agenda?.want ?? ""),
+    };
     return {
       tick: this.tick(),
       actor: {
         id: npc.id, name: npc.name,
         personality: String(npc.data.personality ?? ""),
         voice: typeof npc.data.voice === "string" ? npc.data.voice : undefined,
+        ...readDepth(npc.data),
+        bearing: readBearing(npc.data)?.word,
       },
       agenda: agenda ? { goal_id: agenda.goal_id, kind: agenda.kind, want: agenda.want } : null,
       place: { id: z.id, name: z.name, room: roomAt(z, npc.x, npc.y) },
-      visible: ents
-        .filter((e) => e.zone_id === z.id && e.id !== npc.id && canSee(z, npc, e))
-        .map((e) => ({
-          id: e.id, name: e.name,
-          proximity: proximityLabel(chebyshev(npc, e), this.stakes),
-          direction: directionWord(npc, e),
-          health: this.health(e),
-        })),
+      visible: seen.map((e) => ({
+        id: e.id, name: e.name,
+        proximity: proximityLabel(chebyshev(npc, e), this.stakes),
+        direction: directionWord(npc, e),
+        health: this.health(e),
+      })),
       objects: z.objects.map((o) => ({ id: o.id, name: o.name })),
+      world: this.openWorld(),
       ether: Number(npc.data.ether ?? 0),
       conversation: convo && partner
         ? { partner: partner.id, partner_name: partner.name, beat: convo.beat, maxBeats: this.stakes.maxBeats }
         : null,
       recentEvents: this.recentEventsFor(npc.id, ents),
+      memories: recalledLines(this.db, query, this.memory),
       rules: this.rules,
     };
   }
@@ -1440,6 +1711,11 @@ export class Engine {
       ).map((r) => ({ ...r, data: parse(r.data), witnesses: r.witnesses ? String(r.witnesses).split(",") : [] })),
       memories: all("SELECT id, character_id, event_id, tick, text, importance FROM memories ORDER BY id DESC LIMIT 40"),
       story_summary: all("SELECT id, upto_tick, text FROM story_summary ORDER BY id DESC LIMIT 5"),
+      incidents: this.incidents.all(),
+      scheduled: all(
+        `SELECT id, due_tick, kind, incident_id, payload, status FROM scheduled_events
+         ORDER BY due_tick DESC, id DESC LIMIT 40`,
+      ).map((r) => ({ ...r, payload: parse(r.payload) })),
       llm_calls: all(
         `SELECT id, tick, role, model, tokens_input, tokens_output, cost, request, response
          FROM llm_calls ORDER BY id DESC LIMIT 10`,

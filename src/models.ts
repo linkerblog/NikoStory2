@@ -10,10 +10,12 @@ export const ROLE_INFO: Record<LlmRole, string> = {
   memory: "Writes each character's memories and the running story summary.",
   npc: "Proposes what a non-player character does on its turn.",
   cast: "Picks the personality and voice of each new game's characters.",
+  government: "Writes each new game's city, its institutions and how they answer an incident.",
 };
 
 export const REASONING_DEFAULT: Record<LlmRole, boolean> = {
   interpreter: true, narrator: false, architect: true, continuity: true, memory: false, npc: true, cast: false,
+  government: true,
 };
 
 export interface RoleOverride { model: string | null; reasoning: boolean | null }

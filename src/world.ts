@@ -1,13 +1,17 @@
 import { readFileSync } from "node:fs";
 import { getMeta, setMeta, type Db } from "./db.js";
-import type { GeneratedCast, NpcSeed, Personality } from "./cast.js";
+import { DEPTH_KEYS, type Bearing, type GeneratedCast, type NpcSeed, type Personality } from "./cast.js";
+import type { Start } from "./homes.js";
+import { DEFAULT_LOT } from "./zones.js";
+import { compileWorld, loadWorldDoc } from "./worlddoc.js";
 
 export interface Obj { id: string; type: string; name: string; x: number; y: number; blocks: boolean }
 export interface Room { id: string; name: string; x: number; y: number; w: number; h: number }
 // A door: `(x, y)` is a 'D' tile in this zone and `to` is the zone it leads to. The entry tile in
 // the target is resolved from the target's own portal back to this zone, so no coordinates are
 // duplicated and two zones can never disagree about where the door puts you.
-export interface Portal { x: number; y: number; to: string; label: string }
+// `theme` names the kind of building behind a door (`data/city.json`), which picks its furniture.
+export interface Portal { x: number; y: number; to: string; label: string; theme?: string }
 export type ZoneKind = "house" | "outdoor" | "building";
 export interface Zone {
   id: string; name: string; description: string;
@@ -24,7 +28,15 @@ export interface Ent {
 }
 
 // The setting the narrator must not contradict. Authored in `data/world.json`.
-export interface WorldFacts { year: number; country: string; facts: string[]; style: string }
+// What every prompt receives, compiled from the world document (`src/worlddoc.ts`). `premise` and
+// `protagonist` are Niko's own origin and nature: only the narrator and the continuity check get them.
+// `city` is the invented city of this save, written with its government; it is not in `world.json`.
+export interface WorldFacts {
+  year: number; country: string; facts: string[]; style: string;
+  premise?: string; protagonist?: { personality: string; history: string }; tags?: string[];
+  life?: string[]; // [Daily life]: how an ordinary day goes; public, and texture rather than fact
+  city?: { name: string; summary: string };
+}
 
 // The scripted fall that opens a new game. Authored in `data/opening.json`. `brace_ability` is the
 // id of an ability in `data/rules.json`: the opening references it, the engine resolves its cost.
@@ -46,9 +58,7 @@ export const DEFAULT_OPENING: Opening = {
 const read = <T>(path: string): T => JSON.parse(readFileSync(path, "utf-8")) as T;
 
 export function loadWorld(dataDir: string): WorldFacts {
-  const w = read<WorldFacts>(`${dataDir}/world.json`);
-  if (!Array.isArray(w.facts)) throw new Error("world.json has no facts list");
-  return { year: w.year, country: w.country, facts: w.facts, style: w.style ?? "" };
+  return compileWorld(loadWorldDoc(dataDir));
 }
 
 // A malformed opening is rejected, not trusted: at least one beat, a brace ability id and, when a
@@ -89,30 +99,42 @@ export function roomAt(zone: Zone, x: number, y: number): string {
 
 // Replaces the personality and voice of seeded NPCs with what the `cast` role wrote. It runs right after
 // `seed`, before the first narration, so no prompt ever sees the pool temperament it replaces. An id
-// that is not an NPC of this save is ignored.
-export function applyPersonalities(db: Db, picks: Record<string, Personality>): void {
+// that is not an NPC of this save is ignored. The depth (traits, quirk, fear, backstory) follows the
+// personality: the model's own when it wrote a valid one, none otherwise, because the pool's depth was
+// written for a different temperament and would contradict the new one. A bearing the role named replaces the
+// pool's; any other keeps the pool's, because a bearing is a way of moving and never contradicts a personality.
+export function applyPersonalities(db: Db, picks: Record<string, Personality>, bearings: Record<string, Bearing> = {}): void {
   const row = db.prepare("SELECT data FROM entities WHERE id = ? AND type = 'npc'");
   const upd = db.prepare("UPDATE entities SET data = ? WHERE id = ?");
   db.transaction(() => {
     for (const [id, p] of Object.entries(picks)) {
       const r = row.get(id) as { data: string } | undefined;
-      if (r) upd.run(JSON.stringify({ ...JSON.parse(r.data), personality: p.personality, voice: p.voice }), id);
+      if (!r) continue;
+      const data: Record<string, unknown> = { ...JSON.parse(r.data), personality: p.personality, voice: p.voice };
+      for (const k of DEPTH_KEYS) delete data[k];
+      const bearing = p.bearing ? bearings[p.bearing] : undefined;
+      upd.run(JSON.stringify({ ...data, ...(p.depth ?? {}), ...(bearing ? { bearing } : {}) }), id);
     }
   })();
 }
 
 // Without a cast the authored NPCs of `data/npcs.json` are planted; with one, the generated people take
 // their place and the facts that name them are reworded (see `Engine.knownFacts`).
-export function seed(db: Db, dataDir: string, seedValue: number, cast?: GeneratedCast): void {
+export function seed(db: Db, dataDir: string, seedValue: number, cast?: GeneratedCast, start?: Start): void {
   if (getMeta(db, "seeded")) return;
   const niko = read<any>(`${dataDir}/niko.json`);
   const npcs = cast?.npcs ?? read<NpcSeed[]>(`${dataDir}/npcs.json`);
+  // The home the game opens in: the drawn one, or the authored house `niko.json` names.
+  const homeId: string = start?.home.zone.id ?? niko.start_zone;
+  const spot = start?.home.start ?? { x: niko.x, y: niko.y };
   const ins = db.prepare(
     "INSERT INTO entities (id, type, name, zone_id, x, y, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   db.transaction(() => {
-    ins.run("niko", "player", niko.name, niko.start_zone, niko.x, niko.y, JSON.stringify(niko.data));
-    for (const n of npcs) ins.run(n.id, "npc", n.name, niko.start_zone, n.x, n.y, JSON.stringify(n.data));
+    ins.run("niko", "player", niko.name, homeId, spot.x, spot.y, JSON.stringify(niko.data));
+    for (const n of npcs) ins.run(n.id, "npc", n.name, homeId, n.x, n.y, JSON.stringify(n.data));
+    setMeta(db, "home", homeId);
+    setMeta(db, "lot", start?.lot ?? DEFAULT_LOT);
     setMeta(db, "seed", String(seedValue));
     setMeta(db, "fact_texts", JSON.stringify(cast?.factTexts ?? {}));
     setMeta(db, "tick", "0");

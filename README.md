@@ -1,4 +1,4 @@
-# NikoStory2 — prototype v0.9.0
+# NikoStory2 — prototype v0.13.0
 
 A turn-based 2D game on a grid (1 tile = 1 m). Everything runs on your computer and the world
 lives in a single SQLite file. The browser draws the state and sends commands; it never simulates.
@@ -33,9 +33,9 @@ fresh save uses the authored NPCs of `data/npcs.json`. To wipe the save by hand,
 In `.env` define `OPENROUTER_API_KEY` and `NARRATOR_MODEL` (pick one at https://openrouter.ai/models).
 Every role has its own model, reasoning flag and idle timeout: `<ROLE>_MODEL` (defaults to
 `NARRATOR_MODEL`), `<ROLE>_REASONING` and `<ROLE>_IDLE_MS`, for the roles `INTERPRETER`, `NARRATOR`,
-`ARCHITECT`, `CONTINUITY`, `MEMORY`, `NPC` and `CAST`. Reasoning defaults on for the interpreter, the
-architect, the continuity check and the NPC decider, and off for the narrator, the memory writer and the
-cast writer.
+`ARCHITECT`, `CONTINUITY`, `MEMORY`, `NPC`, `CAST` and `GOVERNMENT`. Reasoning defaults on for the
+interpreter, the architect, the continuity check, the NPC decider and the government writer, and off for
+the narrator, the memory writer and the cast writer.
 The **Models** tab (topbar or `F3`) edits the model and the reasoning flag of every role from the app and
 applies them to the next call, with no restart: it can even switch the LLM on when `.env` has a key but no model.
 Its choices are saved in the `role_config` table, beat `.env`, and survive "Start new game"; "Clear all
@@ -55,8 +55,12 @@ continuity rewrite. If that fails the offline narrator is used without breaking 
 |---|---|
 | `src/db.ts` | SQLite open, numbered migrations and `settings` helpers |
 | `src/world.ts` | Loads the zone, world and opening data and seeds Niko and the NPCs |
-| `src/cast.ts` | Loads and validates `data/cast.json` and generates a new cast from a seed |
-| `src/zones.ts` | Zone store, the deterministic street/building generator and the LLM-draft validator |
+| `src/cast.ts` | Loads and validates `data/cast.json`, generates a new cast from a seed and a home, and holds the depth and bearing of a character |
+| `src/homes.ts` | The homes a game can open in (`data/house_zone.json`, `data/homes.json`), their contract and the seeded draw of the start |
+| `src/worlddoc.ts` | The worldbuilding document: the author's sections, their validation, what each role receives and the World tab's save logic |
+| `src/government.ts` | The government of a new game (city, institutions, protocol): fallback, draft validation and the `government` role |
+| `src/incidents.ts` | Incidents and the scheduled-event queue; tags and the rule that decides when a protocol step fires |
+| `src/zones.ts` | The city (`data/city.json`): districts, lots and exits; the zone store, the building generator and the LLM-draft validator |
 | `src/actions.ts` | The single `Action` union and the deterministic free-text parser |
 | `src/rules.ts` | Loads and validates `data/rules.json` (abilities, combat, effect limits, inventory slots, world limits) |
 | `src/combat.ts` | Pure health rules: vitals with defaults, health bands, the seeded blow roll, Ether/guard mitigation |
@@ -121,10 +125,43 @@ npm test          # tests only
   the pool temperament, and a failed or over-budget call changes nothing. The result lives in the save, so
   with the role on, the same seed no longer promises the same personalities (they never steer the engine,
   only the prompts).
-- A multi-zone world on one 2D grid (1 tile = 1 m): the hand-made 10x15 house, a 40x40 street with
-  six buildings, and building interiors generated on first entry. Doors link zones; the entry tile is
-  derived from the reciprocal door, so navigation stays coherent at every scale. Perception, collision
-  and events are per zone.
+- Characters have depth: `traits` (2 to 4 words), a `quirk`, a `fear` and a short `backstory`, stored beside
+  `personality` and `voice`. Every temperament in `data/cast.json` carries one, so a cast has depth with no
+  network; the `cast` role may write its own. A depth is all or nothing (`parseDepth`): when the role writes
+  a personality without a valid one, the pool's depth is removed, so a stern character never keeps a
+  scatterbrained quirk. The backstory is private and never mentions Niko or the fall; the `npc` prompt tells
+  the model it colours choices and is never recited.
+- Incidents and a government (migration 9, `incidents` and `scheduled_events`): the landing is an incident
+  tagged `sky_fall`, plus `ether` if Niko braced. Each named witness and a few unnamed bystanders (by zone
+  kind, `rules.incidents.ambient`) may report it; the first success queues a `report`. When it fires, the
+  government's protocol is queued relative to it and each step is judged as it comes due (`when`:
+  `always`/`contacted`/`uncontacted`, plus its required tags). A step makes its cue felt (sirens) and
+  spawns responders as ordinary NPCs, through the zone's door or at the far edge of the street, with an
+  `approach niko` agenda; they move, see, talk and can be struck under the same rules as anyone. The
+  institution places Niko only through sightings (entering a zone rolls the same report chance), so slipping
+  into a building can lose the trail. Talking to a responder is contact and adds `unregistered`. The
+  government is an invented city, 1 to 5 institutions and up to 6 steps, written by the optional
+  `government` role at every seeded reset and checked by the engine against bounds in `data/rules.json`; a
+  missing or rejected draft leaves the deterministic one from `data/government.json`. The city name reaches
+  the narrator and the architect. The Debug tab's snapshot lists the incidents and the queue.
+- A multi-zone world on one 2D grid (1 tile = 1 m): five outdoor districts (the 40x40 street plus the market to
+  the north, the park to the east, the riverside to the west and the station to the south), each with its own
+  buildings, scenery and exits on its edges, and building interiors generated on first entry. `data/city.json`
+  holds the plans and `loadCity` rejects an overlapping building, a door into a wall, an exit with no way back
+  or a door nobody can reach. Doors and exits link zones; the entry tile is derived from the reciprocal door,
+  so navigation stays coherent at every scale, and an interior's exit returns to the district that holds it.
+  Perception, collision and events are per zone. An older save gains the new exits and districts on its next boot.
+- A different start each game: "Start new game" draws one of five homes (the authored house, a flat, a
+  farmhouse, a loft and a cottage, `data/homes.json`) and one of five lots of the city to stand it on, from the
+  same seed as the cast. The first boot and a restart without a seed keep the authored house on the street. A
+  home is a contract (a `living_room`, a `table`, a `wardrobe`, spawn tiles per cast role) that `loadHomes`
+  enforces; the letter and the key follow it (`on` in `data/items.json`). The other lots are neighbours' houses.
+- Bearing: every character has a way of carrying itself around Niko once its errand is done (`shadow`,
+  `companion`, `trailing`, `shy`, `lingers`, `stays` in `data/cast.json`, chosen by its temperament or by the
+  `cast` role). It walks after him with the same moves as anyone, with a chance per tick drawn from the seed;
+  a `follow` one that was within its leash when he took a door walks to it and comes through after him a few
+  ticks later (a `trail` in its data, no table). An `approach` agenda that was waiting to speak resumes when he
+  walks off. Responders have no bearing and are untouched.
 - Building interiors are asked of the LLM (the architect role) and validated by the engine: exact
   size, solid border, walkable entry and a floor majority. A missing, invalid or over-budget draft
   falls back to a deterministic generator, so play never depends on the model.
@@ -143,7 +180,9 @@ npm test          # tests only
   or over-budget proposal falls back to the deterministic agenda. Two NPCs can hold a conversation
   between them, capped by `maxBeats` and closed by the engine; only the witnesses of the exchange
   remember it and, since Niko is not a party, no fact is revealed to him. The role runs at most once
-  per NPC per turn, only while Niko can see the NPC and every `npcThinkEveryTicks` ticks.
+  per NPC per turn, only while Niko can see the NPC and every `npcThinkEveryTicks` ticks. Its prompt carries
+  the character's depth and `memories`, the same ranked recall Niko's narration uses, built only from what
+  that character witnessed, next to the last few raw events.
 - Conversations as effects: `speak` to an open conversation is a reply, `end_conversation` leaves;
   the engine closes the exchange after `maxBeats`, storing the revealed fact once.
 - Items (migration 7, `items`): portable things with a single owner, a tile or a character, enforced by
@@ -162,6 +201,17 @@ npm test          # tests only
   while the turn runs, and a `stage` delta reports the phase (`interpreting`, `resolving`, `narrating`,
   `checking`). The narrator is followed by deterministic checks and one continuity rewrite; a turn that
   fell back to offline narration is flagged `degraded`.
+- A `World` tab (topbar tab or `F4`): the worldbuilding written under the author's own headings, [Init],
+  [Personality], [Initial history], [Tags], [WorldBuilding], [Daily life], [Biology] and [Format], plus the
+  year and the country. [Daily life] is how an ordinary day goes (food, work, what is normal on the street):
+  texture the narrator and the characters draw on, kept apart from the facts, public to every role, never
+  plot, and optional in an older saved edit. It reads `GET /api/world` and saves with `POST /api/world` (`{ doc }` to save, `{ reset: true }` to
+  return to `data/world.json`). The engine validates every field (lengths, line counts, text only) and a rejected
+  edit changes nothing. An edit lives in `world_doc` (migration 10), a preference of the install: Start new game
+  keeps it, and it is read on every call, so the next narration already uses it. The tab also lists which role
+  reads the world and how much of it: the narrator and the continuity check get all of it; the interpreter, the
+  NPC decider, the architect, the cast writer and the government writer get it without [Init], [Personality] and
+  [Initial history], because the people of the world do not know where Niko comes from.
 - A `Models` tab (topbar tab or `F3`): one card per role with its model, reasoning flag and where each value comes
   from (set here, `.env`, inherited from the narrator). It reads `GET /api/models`, saves with `POST /api/models`
   and autocompletes from `GET /api/models/catalog`.
@@ -174,7 +224,10 @@ npm test          # tests only
 
 - Beliefs, relationships, embeddings and semantic retrieval of memories.
 - NPC knowledge of facts, beliefs and relationships; NPCs still do not read `facts_known`.
-- NPCs crossing zones: they only act in the zone Niko is in, and idle while he is away.
+- NPCs crossing zones: they only act in the zone Niko is in, and idle while he is away. A responder
+  therefore waits where it was sent until Niko comes back to that zone.
+- Custody, arrest and searches of other zones; incidents other than the landing; NPCs knowing about an
+  alert (rumours, the press); a city larger than the street.
 - Weapons, equipment, ranged attacks, fall damage, death and healing items; offline NPCs never fight back.
 - `give`, `use`, locks, containers, NPCs that take or react to items, items in generated buildings,
   and a second scene after `scene_resolved`.
@@ -185,9 +238,14 @@ npm test          # tests only
 - `weight_kg: 118` in `data/niko.json` comes from the "260 lb" reference; adjust it.
 - Initial Ether 3, max 100 and regeneration 1 per tick are provisional values; the `brace` cost of
   2 in `data/rules.json` is provisional so bracing is affordable exactly once at the start.
-- The world facts in `data/world.json` and the opening lore in `data/niko.json` (`origin`, `core`)
-  come from a brainstorming summary; confirm them against the original session before relying on
-  them.
+- `data/world.json` is now the author's own template (the start written for the game). Three things in it
+  are interpretations to confirm: "Greentext." sits at the end of [Format] and is passed to the narrator as
+  written, with no rule that enforces a `>` prefix; "Never talks" is characterisation for the narrator and the
+  interpreter, and the engine still lets the player write Niko's words; and the history says Ether can rival a
+  god and take any weapon form while the rules give Niko 3 Ether and fists, so the narrator is told the
+  history is background and may narrate only what the events show.
+- The tag "Reverse rape" from the template is not in [Tags]: `AGENTS.md` requires every sexual action to be
+  adults-only with consent from all parties as a precondition in code, and no such action exists yet.
 - The stakes values in `data/stakes_rules.json` (four conversation beats, proximity 1/3, the 0.6
   overlap threshold) and the scene hook in `data/scene.json` are provisional. The `rules.json`
   effect limits (`maxEffects` 4, `maxPathSteps` 6, `summaryEveryTicks` 20) are provisional too, as
@@ -195,6 +253,11 @@ npm test          # tests only
 - The letter's `text`, the `fact_letter_text` wording and the goal `text` are placeholders
   (`<authored by the user>`) in `data/items.json` and `data/scene.json`: they decide the story's
   answer, so they wait for the author. The spare key in the wardrobe is a provisional example item.
+- The `rules.incidents` numbers (`reportChance` 0.6, `reportDelay` 4 to 10, the ambient bystanders) and the
+  delays of the fallback protocol in `data/government.json` (20, 60, 90 and 130 ticks) are provisional. A
+  tick is one beat of play, not a second, so the response is time-compressed on purpose.
+- The `government` role could not be tested against a live model; the tests stub the provider and cover the
+  validation, the fallback and the whole timeline offline.
 - The client uses plain HTTP (no WebSocket): for a turn-based game it is enough and easier to debug.
 - The client is plain JavaScript, with no types shared with the server.
 - The OpenRouter roles could not be tested end to end (no network access from where it was built);

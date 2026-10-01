@@ -30,6 +30,12 @@
       { "max": 1, "label": "unhurt" }
     ]
   },
+  "incidents": {
+    "reportChance": 0.6,
+    "reportDelay": [4, 10],
+    "ambient": { "house": 2, "outdoor": 6, "building": 1 },
+    "government": { "maxInstitutions": 5, "maxSteps": 6, "maxUnits": 2, "minAfter": 1, "maxAfter": 300, "maxText": 160 }
+  },
   "limits": [
     "Niko cannot fly.",
     "Niko cannot walk through walls, sealed doors or people.",

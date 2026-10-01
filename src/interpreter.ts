@@ -2,7 +2,7 @@ import { parseFreeAction, type Action, type Dir, type ItemRef, type ReplyChoice 
 import { extractJson, type LlmClient } from "./llm.js";
 import type { DeltaSink } from "./narrator.js";
 import type { GameRules } from "./rules.js";
-import type { Ent, Zone } from "./world.js";
+import type { Ent, WorldFacts, Zone } from "./world.js";
 
 // What the player's text means, as typed effects. The engine validates every one of them against the
 // same rules as any other action; the model only proposes, it never writes state.
@@ -25,6 +25,8 @@ export interface InterpretContext {
   text: string;
   tick: number;
   sheet: Record<string, unknown>;
+  // The world as anyone in it would know it; Niko's own origin is already in the sheet, not here.
+  world?: WorldFacts;
   ether: number;
   etherMax: number;
   rules: GameRules;
@@ -187,6 +189,7 @@ Rules:
   {"kind":"interact","target":"<object or item id>","verb":"examine|search|take|drop|read"}  (search targets an object, take/drop/read an item)
   {"kind":"ability","id":"<ability id>","target":"<id, optional>"}
   {"kind":"attack","target":"<visible character id>"}  (a punch or a kick at someone right next to Niko; the engine rolls whether it lands)
+- The world in the situation is true: do not accept an action that contradicts it.
 - Keep speak.text in the player's own words and language; do not rewrite it as narration.
 - If nothing in the text can be done under these rules, return {"effects":[],"impossible":{"reason":"<short reason, in ${language}>"}}.
 - "keywords": the names and objects the text mentions, for memory recall.
@@ -201,6 +204,7 @@ export class OpenRouterInterpreter implements Interpreter {
     return {
       player_text: c.text,
       niko_sheet: c.sheet,
+      world: c.world ?? null,
       ether: { current: c.ether, max: c.etherMax },
       rules: {
         abilities: Object.values(c.rules.abilities),

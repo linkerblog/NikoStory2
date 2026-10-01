@@ -10,9 +10,11 @@ import { OpenRouterInterpreter } from "./interpreter.js";
 import { OpenRouterMemories } from "./memory.js";
 import { OpenRouterNpcDecider } from "./npc.js";
 import { OpenRouterCastWriter } from "./cast.js";
+import { OpenRouterGovernor } from "./government.js";
 import { LLM_ROLES, LlmClient, type LlmRole } from "./llm.js";
 import { ROLE_INFO, loadOverrides, parseCatalog, parseModelsPatch, resolveRoles, saveOverrides, type CatalogModel } from "./models.js";
 import type { EngineServices } from "./engine.js";
+import { applyWorldPatch, loadWorldDoc, worldPayload } from "./worlddoc.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -41,6 +43,7 @@ function buildServices(db: import("./db.js").Db, memory: import("./memory.js").M
       llm = undefined;
       delete services.npcdecider;
       delete services.castwriter;
+      delete services.governor;
       Object.assign(services, offlineServices());
       console.log("Roles: offline (set OPENROUTER_API_KEY in .env and pick a narrator model to use the LLM)");
       return;
@@ -59,6 +62,7 @@ function buildServices(db: import("./db.js").Db, memory: import("./memory.js").M
         memories: new OpenRouterMemories(llm),
         npcdecider: new OpenRouterNpcDecider(llm),
         castwriter: new OpenRouterCastWriter(llm),
+        governor: new OpenRouterGovernor(llm),
       });
     }
     const tag = (r: LlmRole) => `${r} ${roles[r].model}${roles[r].reasoning ? "(+reasoning)" : ""}`;
@@ -68,9 +72,11 @@ function buildServices(db: import("./db.js").Db, memory: import("./memory.js").M
   return services;
 }
 
+const dataDir = join(root, "data");
+const worldDefaults = loadWorldDoc(dataDir);
 const { engine, reset, db } = createGame(
   join(root, env.DB_PATH ?? "game.db"),
-  join(root, "data"),
+  dataDir,
   Number(env.SEED ?? 1337),
   buildServices,
 );
@@ -222,6 +228,19 @@ const server = createServer(async (req, res) => {
       saveOverrides(db, parsed.patch);
       refreshServices();
       json(200, modelsPayload());
+    } else if (req.method === "GET" && req.url === "/api/world") {
+      json(200, worldPayload(db, worldDefaults));
+    } else if (req.method === "POST" && req.url === "/api/world") {
+      if (busy) return json(409, { ok: false, error: "Turn already in progress." });
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        return json(400, { ok: false, error: "Invalid JSON body." });
+      }
+      const r = applyWorldPatch(db, body);
+      if (!r.ok) return json(400, r);
+      json(200, worldPayload(db, worldDefaults));
     } else if (req.method === "POST" && req.url === "/api/turn") {
       if (busy) return json(409, { ok: false, error: "Turn already in progress." });
       busy = true;

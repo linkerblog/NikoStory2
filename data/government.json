@@ -1,0 +1,69 @@
+{
+  "tags": ["sky_fall", "ether", "unregistered"],
+  "cities": [
+    "Harrow Bay", "Kestrel Point", "Port Alder", "Lowmere", "Santa Aurelia",
+    "New Corvane", "Brightwater", "Dunmore Falls", "Ashgrove", "Vellmouth"
+  ],
+  "surnames": [
+    "Vance", "Okafor", "Lindqvist", "Marsh", "Castellan", "Brandt", "Idris", "Hollis",
+    "Moreau", "Tanaka", "Reyes", "Calloway", "Novak", "Adeyemi", "Fenwick", "Sorensen"
+  ],
+  "fallback": {
+    "city": {
+      "name": "{city}",
+      "summary": "A busy port city of several hundred thousand people where hybrids and humans share the streets and most city offices are run by women."
+    },
+    "institutions": [
+      {
+        "id": "city_police",
+        "name": "{city} Police Department",
+        "title": "Officer",
+        "tone": "Procedural and cautious; asks for names and papers and answers very little."
+      },
+      {
+        "id": "anomalies_office",
+        "name": "Federal Office of Anomalous Events",
+        "title": "Agent",
+        "tone": "Courteous and controlled; never explains who sent them and never raises a voice."
+      }
+    ],
+    "protocol": [
+      {
+        "institution": "city_police",
+        "after": 20,
+        "when": "always",
+        "requires": [],
+        "units": 1,
+        "cue": "Sirens wail somewhere beyond the walls, drawing closer.",
+        "want": "{name} came to check a report of something falling from the sky and to find out who is hurt."
+      },
+      {
+        "institution": "anomalies_office",
+        "after": 60,
+        "when": "always",
+        "requires": ["ether"],
+        "units": 1,
+        "cue": "A dark vehicle idles outside, engine low, no siren.",
+        "want": "{name} came because instruments logged an Ether discharge and wants to speak with whoever caused it."
+      },
+      {
+        "institution": "city_police",
+        "after": 90,
+        "when": "uncontacted",
+        "requires": [],
+        "units": 2,
+        "cue": "Boots and radios outside: someone is going door to door.",
+        "want": "{name} is searching the area for the person from the report, who has not been found."
+      },
+      {
+        "institution": "anomalies_office",
+        "after": 130,
+        "when": "contacted",
+        "requires": ["unregistered"],
+        "units": 1,
+        "cue": "A second, quieter knock follows the first visit.",
+        "want": "{name} came to follow up on a person with no papers and no record who dropped from the sky."
+      }
+    ]
+  }
+}

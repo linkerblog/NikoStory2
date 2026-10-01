@@ -14,6 +14,32 @@ export interface Ability {
   guard_ticks?: number;
 }
 
+// Bounds on a government draft written by the `government` role; the engine rejects anything outside them.
+export interface GovernmentLimits {
+  maxInstitutions: number;
+  maxSteps: number;
+  maxUnits: number;
+  minAfter: number;
+  maxAfter: number;
+  maxText: number;
+}
+
+// How an incident turns into a report. `ambient` is the number of unnamed bystanders by zone kind, each
+// one a chance that somebody calls it in; the named witnesses of the event count on top. Provisional.
+export interface IncidentRules {
+  reportChance: number;
+  reportDelay: [number, number];
+  ambient: Record<string, number>;
+  government: GovernmentLimits;
+}
+
+export const DEFAULT_INCIDENTS: IncidentRules = {
+  reportChance: 0.6,
+  reportDelay: [4, 10],
+  ambient: { house: 2, outdoor: 6, building: 1 },
+  government: { maxInstitutions: 5, maxSteps: 6, maxUnits: 2, minAfter: 1, maxAfter: 300, maxText: 160 },
+};
+
 export interface GameRules {
   abilities: Record<string, Ability>;
   combat: CombatRules;
@@ -25,6 +51,7 @@ export interface GameRules {
   npcThinkEveryTicks: number;
   // How many items Niko can hold at once. Provisional.
   inventorySlots: number;
+  incidents: IncidentRules;
   limits: string[];
   risk: string;
 }
@@ -39,12 +66,43 @@ export const DEFAULT_RULES: GameRules = {
   summaryEveryTicks: 20,
   npcThinkEveryTicks: 3,
   inventorySlots: 8,
+  incidents: DEFAULT_INCIDENTS,
   limits: [],
   risk: "",
 };
 
 const positiveInt = (x: unknown): x is number => Number.isInteger(x) && (x as number) > 0;
 const nonNegativeInt = (x: unknown): x is number => Number.isInteger(x) && (x as number) >= 0;
+
+function parseIncidents(raw: any): IncidentRules {
+  if (raw === undefined) return DEFAULT_INCIDENTS;
+  const bad = (what: string) => new Error(`rules.json incidents ${what}`);
+  if (!(typeof raw?.reportChance === "number" && raw.reportChance >= 0 && raw.reportChance <= 1)) {
+    throw bad("reportChance must be between 0 and 1");
+  }
+  const d = raw.reportDelay;
+  if (!Array.isArray(d) || d.length !== 2 || !positiveInt(d[0]) || !positiveInt(d[1]) || d[0] > d[1]) {
+    throw bad("reportDelay must be [min, max] positive integers");
+  }
+  const ambient = raw.ambient;
+  if (!ambient || typeof ambient !== "object" || Object.values(ambient).some((n) => !nonNegativeInt(n))) {
+    throw bad("ambient must map zone kinds to non-negative integers");
+  }
+  const g = raw.government;
+  for (const k of ["maxInstitutions", "maxSteps", "maxUnits", "minAfter", "maxAfter", "maxText"] as const) {
+    if (!positiveInt(g?.[k])) throw bad(`government.${k} must be a positive integer`);
+  }
+  if (g.minAfter > g.maxAfter) throw bad("government.minAfter cannot exceed maxAfter");
+  return {
+    reportChance: raw.reportChance,
+    reportDelay: [d[0], d[1]],
+    ambient,
+    government: {
+      maxInstitutions: g.maxInstitutions, maxSteps: g.maxSteps, maxUnits: g.maxUnits,
+      minAfter: g.minAfter, maxAfter: g.maxAfter, maxText: g.maxText,
+    },
+  };
+}
 
 // A malformed rules file is rejected, not trusted: the engine and the interpreter both depend on it.
 export function loadRules(dataDir: string): GameRules {
@@ -91,6 +149,7 @@ export function loadRules(dataDir: string): GameRules {
     summaryEveryTicks: raw.summaryEveryTicks,
     npcThinkEveryTicks: raw.npcThinkEveryTicks ?? DEFAULT_RULES.npcThinkEveryTicks,
     inventorySlots: raw.inventorySlots ?? DEFAULT_RULES.inventorySlots,
+    incidents: parseIncidents(raw.incidents),
     limits: raw.limits,
     risk: raw.risk,
   };

@@ -3,6 +3,11 @@
     "data": {
       "personality": "serious and direct",
       "voice": "Speaks in short, blunt sentences; no pleasantries.",
+      "traits": ["serious", "direct", "responsible"],
+      "quirk": "Squares the edge of whatever is on a table before she says anything important.",
+      "fear": "Staying quiet when a warning would have mattered.",
+      "backstory": "Worked as a dispatcher for years, passing bad news along in as few words as possible.",
+      "bearing": { "id": "shadow", "mode": "follow", "range": 2, "leash": 12, "prob": 1, "word": "stays a step or two behind Niko and never takes the eyes off him" },
       "routine": { "type": "wander", "prob": 0.5 },
       "agenda": {
         "goal_id": "marta_warn", "kind": "approach", "target": "niko",
@@ -14,6 +19,11 @@
     "data": {
       "personality": "curious and talkative",
       "voice": "Chatty and eager; asks questions and shares what she found.",
+      "traits": ["curious", "talkative", "bright"],
+      "quirk": "Turns every small find over in her hands and says what it reminds her of.",
+      "fear": "Missing something interesting because she looked away.",
+      "backstory": "Studied for a library job and still reads every label, note and scrap she comes across.",
+      "bearing": { "id": "companion", "mode": "follow", "range": 2, "leash": 10, "prob": 0.8, "word": "walks along with Niko, close enough to talk" },
       "routine": { "type": "wander", "prob": 0.5 },
       "agenda": {
         "goal_id": "ivy_letter", "kind": "visit", "target": "table",

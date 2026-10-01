@@ -97,6 +97,35 @@ const MIGRATIONS: string[] = [
      model     TEXT,
      reasoning INTEGER
    );`,
+  // An incident is something the world may react to; the queue carries every delayed consequence. Both
+  // belong to the save: `clearSave` wipes them, children first.
+  `CREATE TABLE incidents (
+     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+     kind          TEXT    NOT NULL,
+     zone_id       TEXT    NOT NULL,
+     tick          INTEGER NOT NULL,
+     tags          TEXT    NOT NULL,
+     status        TEXT    NOT NULL CHECK (status IN ('unreported','pending','reported')),
+     reported_tick INTEGER,
+     last_zone     TEXT    NOT NULL,
+     last_tick     INTEGER NOT NULL,
+     contacted     INTEGER NOT NULL DEFAULT 0
+   );
+   CREATE TABLE scheduled_events (
+     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+     due_tick    INTEGER NOT NULL,
+     kind        TEXT    NOT NULL CHECK (kind IN ('report','step','sighting')),
+     incident_id INTEGER NOT NULL REFERENCES incidents(id),
+     payload     TEXT    NOT NULL DEFAULT '{}',
+     status      TEXT    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','done','skipped'))
+   );
+   CREATE INDEX idx_scheduled_due ON scheduled_events (status, due_tick, id);`,
+  // The worldbuilding the author edits in the World tab. Like `role_config` it is a preference of the
+  // install, not of the save: `clearSave` leaves it alone, so a new game keeps the world.
+  `CREATE TABLE world_doc (
+     id  INTEGER PRIMARY KEY CHECK (id = 1),
+     doc TEXT    NOT NULL
+   );`,
 ];
 
 export function openDb(path: string): Db {
@@ -133,6 +162,8 @@ export function clearSave(db: Db): void {
       DELETE FROM llm_calls;
       DELETE FROM story_summary;
       DELETE FROM items;
+      DELETE FROM scheduled_events;
+      DELETE FROM incidents;
       DELETE FROM entities;
       DELETE FROM settings;
       DELETE FROM zones;

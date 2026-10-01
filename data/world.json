@@ -1,10 +1,46 @@
 {
   "year": 2030,
   "country": "United States",
-  "facts": [
-    "Hybrids (humans with animal traits) are common and accepted.",
-    "Every living thing carries mana.",
-    "Women outnumber men about ten to one; gender roles are inverted compared to ours."
+  "init": "Niko appears suddenly in another world after a brutal fight with a Giant Abyssal creature. After he defeated it, the creature exploded trying to take both of them, but failed and tore reality open. The tear sent Niko to a dimension different from his own.",
+  "personality": "Introverted, clumsy, chill, ADHD, autistic, snuggly, very calm. Never talks.",
+  "history": "Niko is a bio-engineered combat unit from another dimension, totally different from this one. He is the only unit with an Ether Core, an artifact extracted from an Abyssal creature of his original dimension. The Ether Core constantly generates Ether, an enormous amount that can rival a god. Ether is a primal energy that can be turned into any other energy. It can also assimilate any type of energy and be shaped into any battle form (weapons). Ether is highly destructive and dangerous.",
+  "tags": [
+    "Slice of life", "Adventure", "Action", "Seinen", "Role reversal", "Matriarchy",
+    "Dark Romance", "Technological gap", "Strong to Stronger"
   ],
-  "style": "Short sentences, fast rhythm, no decorative text. End on pressure, a question or a visible choice."
+  "world": [
+    "After a global event after 2000, hybrids started to appear as natural births. Now they are common.",
+    "Some hybrids have abilities.",
+    "Every being alive has mana.",
+    "Heroes and Villains exist, and they have abilities.",
+    "Gender roles are reversed.",
+    "There are 10 females for every 1 male."
+  ],
+  "daily_life": [
+    "Neighbours know each other by sight and by gossip; a stranger on the street is noticed and talked about before the day is over.",
+    "Mornings start early: coffee in a thermos, a bus or a bike, doors unlocked at the shop by eight. Evenings end with people on stoops and balconies, talking across the gap.",
+    "Most people work at a counter, a workshop, a clinic, a kitchen or a school, on shifts, and run their errands on the way home.",
+    "Most bosses, mechanics, police officers and shopkeepers are women. A man at a counter or in a kitchen is ordinary; a man giving orders is the one people remark on.",
+    "A man who walks alone draws looks of concern or curiosity, not of surprise. Strangers offer him directions, a seat or a ride, and some of them will not take no on the first try.",
+    "Meals are simple and shared: coffee, bread, rice, eggs, something fried. A guest is offered a drink and a seat before anyone asks a question.",
+    "Homes are small and lived in: shoes by the door, a kettle always warm, a shared fridge note, a plant on every sill. Neighbours borrow sugar, tools and chairs.",
+    "Money is cards and phones. Small shops still take coins, and a tab at the corner store is a matter of trust, kept in a notebook behind the till.",
+    "Phones are everywhere. News, messages and clips spread within minutes; a strange sight on the street is on someone's screen before the police arrive.",
+    "Hybrids are part of ordinary life: a tail on a bus, ears under a hat, a purr in a waiting room. Staring is rude, and asking about someone's traits is for friends.",
+    "Hybrid children go to the same schools as everyone else. Teachers keep a spare seat shaped for tails, and a quiet corner for ears that hurt in noisy rooms.",
+    "Mana is as ordinary as body heat. People feel it in a crowd without thinking about it, children learn to keep theirs calm, and a sudden surge in a quiet street makes every head turn.",
+    "Heroes and Villains are seen on screens and in headlines far more than in person. People know their names, trade stories about them and complain about the damage bills.",
+    "When something loud or strange happens, people first step back and film, then call, then check on whoever is hurt. Few walk toward it unless they are sure it is safe.",
+    "The police and the fire service are respected and a little tired: they arrive fast, ask short questions and write everything down. Hero teams are called for the cases they cannot handle.",
+    "Clinics and pharmacies are on every corner, and most people have a nurse or a pharmacist they trust. A hurt stranger is usually helped first and asked about later.",
+    "Weather decides a lot: umbrellas by the door, wet shoes on the mat, a heater clicking on in the evening. People talk about it the way they talk about family.",
+    "Evenings belong to small things: a game on a screen, laundry, a quarrel about the sink, a neighbour knocking to ask if everyone is all right after something loud.",
+    "Manners are plain and warm. People say thanks for small things, apologise for bumping into each other, and call each other by first name almost at once.",
+    "Rumours travel faster than news. A stranger who appears suddenly is the topic of the whole street by evening, and everyone has a theory about where they came from."
+  ],
+  "biology": [
+    "Males have a vagina and females have a penis.",
+    "Female sexual needs are higher, as a side effect of being the prominent gender."
+  ],
+  "format": "Short sentences with clear intention. Small worldbuilding. Fast paced. No decorative text.\nGreentext."
 }

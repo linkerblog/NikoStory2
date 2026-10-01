@@ -152,11 +152,11 @@
 
   /* Debug view: a tab apart from the game, sharing the same shell. */
   .head-btn { margin-left: auto; padding: 0 var(--s2); font-size: 12px; }
-  #panel-debug, #panel-models { display: none; flex: 1 1 auto; min-height: 0; }
-  body[data-view="debug"] #panel-debug, body[data-view="models"] #panel-models { display: flex; }
-  body[data-view="debug"] .main, body[data-view="models"] .main,
-  body[data-view="debug"] #panel-actions, body[data-view="models"] #panel-actions,
-  body[data-view="debug"] .cmdline, body[data-view="models"] .cmdline { display: none; }
+  #panel-debug, #panel-models, #panel-world { display: none; flex: 1 1 auto; min-height: 0; }
+  body[data-view="debug"] #panel-debug, body[data-view="models"] #panel-models, body[data-view="world"] #panel-world { display: flex; }
+  body[data-view="debug"] .main, body[data-view="models"] .main, body[data-view="world"] .main,
+  body[data-view="debug"] #panel-actions, body[data-view="models"] #panel-actions, body[data-view="world"] #panel-actions,
+  body[data-view="debug"] .cmdline, body[data-view="models"] .cmdline, body[data-view="world"] .cmdline { display: none; }
   .subtabs { display: flex; gap: var(--s1); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); }
   .subtabs .tab { flex: none; padding: var(--s1) var(--s3); font-size: 13px; }
   .debug-body { font-size: 13px; line-height: 1.5; }
@@ -196,6 +196,18 @@
   }
   .role-card input:focus, .role-card select:focus { outline: none; border-color: var(--focus); }
   .role-card .meta { grid-column: 1 / -1; color: var(--fg-dim); font-size: 12px; min-height: 1.5em; }
+  /* World view: the author's template, one field per heading. */
+  .world-grid { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--s2) var(--s3); margin: 0 0 var(--s3); }
+  .world-grid label { display: flex; flex-direction: column; gap: var(--s1); color: var(--fg-dim); font-size: 12px; }
+  .world-grid input {
+    background: var(--bg-raised); color: var(--fg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: var(--s1) var(--s2); font: inherit; font-size: 13px; min-width: 0;
+  }
+  .world-grid input:focus { outline: none; border-color: var(--focus); }
+  .world-section { margin: 0 0 var(--s3); }
+  .world-section .count { margin-left: var(--s2); font-size: 12px; }
+  .world-users { display: grid; grid-template-columns: auto auto 1fr; gap: var(--s1) var(--s3); margin: 0 0 var(--s3); }
+  .world-users span:nth-child(3n+1) { color: var(--accent-2); }
   .badge { font-weight: 400; font-size: 12px; color: var(--fg-dim); }
   .badge.ui { color: var(--accent); }
   .badge.env { color: var(--accent-2); }
@@ -257,6 +269,7 @@
     <span class="brand">NikoStory2</span>
     <nav class="views" id="views" role="tablist" aria-label="Views">
       <button class="tab" type="button" role="tab" data-view="game" aria-selected="true">Game</button>
+      <button class="tab" type="button" role="tab" data-view="world" aria-selected="false">World</button>
       <button class="tab" type="button" role="tab" data-view="models" aria-selected="false">Models</button>
       <button class="tab" type="button" role="tab" data-view="debug" aria-selected="false">Debug</button>
     </nav>
@@ -291,6 +304,12 @@
     </section>
   </div>
 
+  <section class="panel" id="panel-world" aria-label="World">
+    <header class="panel-head"><span>[ WORLD ]</span>
+      <button class="btn head-btn" id="world-refresh" type="button">Refresh</button></header>
+    <div class="body debug-body" id="world-body"></div>
+  </section>
+
   <section class="panel" id="panel-models" aria-label="Models">
     <header class="panel-head"><span>[ MODELS ]</span>
       <button class="btn head-btn" id="models-refresh" type="button">Refresh</button></header>
@@ -312,6 +331,7 @@
     <button class="tab" type="button" role="tab" data-tab="map">Map</button>
     <button class="tab" type="button" role="tab" data-tab="status">Status</button>
     <button class="tab" type="button" role="tab" data-tab="actions">Actions</button>
+    <button class="tab" type="button" role="tab" data-tab="world">World</button>
     <button class="tab" type="button" role="tab" data-tab="models">Models</button>
     <button class="tab" type="button" role="tab" data-tab="debug">Debug</button>
   </nav>
@@ -344,6 +364,7 @@
       <dt><kbd>?</kbd> or <kbd>F1</kbd></dt><dd>Toggle this help</dd>
       <dt><kbd>F2</kbd></dt><dd>Toggle the debug tab</dd>
       <dt><kbd>F3</kbd></dt><dd>Toggle the models tab</dd>
+      <dt><kbd>F4</kbd></dt><dd>Toggle the world tab</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close overlay, clear focus</dd>
     </dl>
     <div class="actions"><button class="btn" id="help-close" type="button">Close</button></div>
@@ -730,6 +751,7 @@ function setView(view) {
   syncTabs();
   if (view === "debug") loadDebug();
   if (view === "models") loadModels();
+  if (view === "world") loadWorld();
 }
 function renderDebug() {
   setDebugTab(debugTab, false);
@@ -774,6 +796,14 @@ function renderOverview() {
   out.push("<h3>[ COST BY ROLE ]</h3>");
   out.push("<pre>" + ((D.cost_by_role || []).length
     ? D.cost_by_role.map((r) => `${esc(r.role)}: ${r.calls} call(s), cost ${r.cost}`).join("\n")
+    : "(none)") + "</pre>");
+  out.push("<h3>[ INCIDENTS ]</h3>");
+  out.push("<pre>" + ((D.incidents || []).length
+    ? D.incidents.map((i) => `#${i.id} ${esc(i.kind)} T${i.tick} ${esc(i.status)} tags=[${esc(i.tags.join(","))}] reportedT${i.reported_tick ?? "-"} last=${esc(i.last_zone)}@T${i.last_tick} contacted=${i.contacted}`).join("\n")
+    : "(none)") + "</pre>");
+  out.push("<h3>[ QUEUE ] (newest 40)</h3>");
+  out.push("<pre>" + ((D.scheduled || []).length
+    ? D.scheduled.map((s) => `#${s.id} dueT${s.due_tick} ${esc(s.kind)} inc${s.incident_id} ${esc(s.status)} ${esc(fmt(s.payload))}`).join("\n")
     : "(none)") + "</pre>");
   out.push("<h3>[ STORY SUMMARY ] (newest 5)</h3>");
   out.push("<pre>" + ((D.story_summary || []).length
@@ -938,6 +968,96 @@ async function saveModels(clear) {
   } catch { status.textContent = "Network error."; }
 }
 
+// ---- World view: the author's worldbuilding, edited here and saved as a preference of the install. ----
+let W = null;
+const WORLD_FIELDS = [
+  ["init", "[Init]", "How Niko came to this world.", 5],
+  ["personality", "[Personality]", "Who Niko is.", 2],
+  ["history", "[Initial history]", "What Niko is.", 6],
+  ["tags", "[Tags]", "The genre of the story. One per line.", 5],
+  ["world", "[WorldBuilding]", "One fact per line. Every role that reads the world takes these as true.", 7],
+  ["daily_life", "[Daily life]", "How an ordinary day goes here, one detail per line: texture for the narrator and the characters, never plot.", 5],
+  ["biology", "[Biology]", "One fact per line. Treated as facts of the world like the rest.", 3],
+  ["format", "[Format]", "The voice and shape of the narration.", 3],
+];
+const worldText = (doc, key) => (Array.isArray(doc[key]) ? doc[key].join("\n") : doc[key]);
+
+async function loadWorld() {
+  try { W = await (await fetch("/api/world")).json(); renderWorld(); }
+  catch { $("world-body").innerHTML = '<p class="dimline">Could not load the world.</p>'; }
+}
+function renderWorld() {
+  if (!W) return;
+  const d = W.doc, L = W.limits;
+  const limitOf = { init: L.init, personality: L.personality, history: L.history, format: L.format };
+  const out = [`<div class="kv"><span>source</span><span>${W.custom ? '<span class="acc">edited here</span>' : "data/world.json (default)"}</span></div>`];
+  out.push(`<p class="models-note">The worldbuilding of the game. A change applies to the next call, with no restart. Start new game keeps it,
+    and so does an old save. A running game picks up the new text on its next narration, but anyone already generated keeps what they were given.</p>`);
+  out.push(`<div class="world-grid">
+    <label>year <input type="number" id="w-year" min="1" max="9999" value="${esc(String(d.year))}"></label>
+    <label>country <input type="text" id="w-country" maxlength="${L.country}" value="${esc(d.country)}" spellcheck="false"></label></div>`);
+  for (const [key, head, hint, rows] of WORLD_FIELDS) {
+    out.push(`<label class="field world-section">${esc(head)} <span>${esc(hint)}</span><span class="count dimline" data-count="${key}"></span>
+      <textarea id="w-${key}" rows="${rows}" spellcheck="false" data-max="${limitOf[key] ?? ""}">${esc(worldText(d, key))}</textarea></label>`);
+  }
+  out.push(`<div class="prompt-actions"><button class="btn" id="world-save" type="button">Save world</button>
+    <button class="btn" id="world-reset" type="button">Restore defaults</button>
+    <span id="world-status" class="dimline"></span></div>`);
+  out.push("<h3>[ WHO READS THIS ]</h3>");
+  out.push(`<p class="models-note">full is everything above. open leaves out [Init], [Personality] and [Initial history]: only the narrator knows where Niko comes from and what he is.</p>`);
+  out.push('<div class="world-users">' + W.users.map((u) => `<span>${esc(u.role)}</span><span>${esc(u.gets)}</span><span class="dimline">${esc(u.how)}</span>`).join("") + "</div>");
+  out.push(`<details><summary>what the narrator receives (saved version)</summary><pre>${esc(JSON.stringify(W.compiled, null, 2))}</pre></details>`);
+  $("world-body").innerHTML = out.join("");
+  $("world-save").onclick = saveWorld;
+  $("world-reset").onclick = resetWorld;
+  $("world-body").querySelectorAll("textarea, input").forEach((i) => i.addEventListener("input", refreshWorldHints));
+  refreshWorldHints();
+}
+// Counts and the unsaved mark, without re-rendering: re-rendering would drop what is being typed.
+function refreshWorldHints() {
+  if (!W) return;
+  let dirty = false;
+  for (const [key] of WORLD_FIELDS) {
+    const t = $("w-" + key);
+    const c = $("world-body").querySelector(`[data-count="${key}"]`);
+    const max = Number(t.dataset.max);
+    c.textContent = max ? `${t.value.length} / ${max}` : `${t.value.split("\n").filter((l) => l.trim()).length} lines`;
+    c.classList.toggle("warn", !!max && t.value.length > max);
+    if (t.value !== worldText(W.doc, key)) dirty = true;
+  }
+  if ($("w-year").value !== String(W.doc.year) || $("w-country").value !== W.doc.country) dirty = true;
+  $("world-status").innerHTML = dirty ? '<span class="warn">unsaved</span>' : "";
+}
+function collectWorld() {
+  const doc = { year: Number($("w-year").value), country: $("w-country").value };
+  for (const [key] of WORLD_FIELDS) {
+    const v = $("w-" + key).value;
+    doc[key] = ["tags", "world", "daily_life", "biology"].includes(key) ? v.split("\n") : v;
+  }
+  return doc;
+}
+async function postWorld(body, done) {
+  const status = $("world-status");
+  status.textContent = "saving…";
+  try {
+    const r = await (await fetch("/api/world", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+    if (!r.ok) { status.textContent = r.error || "Could not save."; return; }
+    W = r;
+    toast(done);
+    renderWorld();
+  } catch { status.textContent = "Network error."; }
+}
+const saveWorld = () => postWorld({ doc: collectWorld() }, "World saved.");
+// Two clicks, so a stray one cannot throw away the author's text.
+let worldResetArmed = 0;
+function resetWorld() {
+  const b = $("world-reset");
+  if (Date.now() - worldResetArmed < 4000) { worldResetArmed = 0; postWorld({ reset: true }, "World restored to the defaults."); return; }
+  worldResetArmed = Date.now();
+  b.textContent = "Click again to restore";
+  setTimeout(() => { if (b.isConnected) b.textContent = "Restore defaults"; }, 4000);
+}
+
 function openHelp() { $("help").hidden = false; $("help-close").focus(); }
 function closeHelp() { $("help").hidden = true; }
 function openConfirm() { $("confirm").hidden = false; $("confirm-ok").focus(); }
@@ -951,11 +1071,12 @@ $("views").addEventListener("click", (e) => {
 $("tabbar").addEventListener("click", (e) => {
   const b = e.target.closest(".tab");
   if (!b) return;
-  if (b.dataset.tab === "debug" || b.dataset.tab === "models") setView(b.dataset.tab);
+  if (b.dataset.tab === "debug" || b.dataset.tab === "models" || b.dataset.tab === "world") setView(b.dataset.tab);
   else { setView("game"); setTab(b.dataset.tab); }
 });
 $("debug-refresh").onclick = loadDebug;
 $("models-refresh").onclick = loadModels;
+$("world-refresh").onclick = loadWorld;
 $("debug-tabs").addEventListener("click", (e) => {
   const b = e.target.closest(".tab");
   if (b) setDebugTab(b.dataset.dtab);
@@ -990,16 +1111,16 @@ addEventListener("keydown", (e) => {
     else if (e.key === "Enter") { e.preventDefault(); closeConfirm(); resetGame(); }
     return;
   }
-  // F2 toggles the debug tab and F3 the models tab. While one is open, only leaving it (or hopping to the other) is handled here.
+  // F2 toggles the debug tab, F3 the models tab and F4 the world tab. While one is open, only leaving it (or
+  // hopping to another) is handled here.
   const view = document.body.dataset.view;
-  if (view === "debug" || view === "models") {
-    const own = view === "debug" ? "F2" : "F3";
-    if (e.key === "Escape" || e.key === own) { e.preventDefault(); setView("game"); }
-    else if (e.key === "F2" || e.key === "F3") { e.preventDefault(); setView(e.key === "F2" ? "debug" : "models"); }
+  const FKEYS = { F2: "debug", F3: "models", F4: "world" };
+  if (view === "debug" || view === "models" || view === "world") {
+    if (e.key === "Escape" || FKEYS[e.key] === view) { e.preventDefault(); setView("game"); }
+    else if (FKEYS[e.key]) { e.preventDefault(); setView(FKEYS[e.key]); }
     return;
   }
-  if (e.key === "F2") { e.preventDefault(); setView("debug"); return; }
-  if (e.key === "F3") { e.preventDefault(); setView("models"); return; }
+  if (FKEYS[e.key]) { e.preventDefault(); setView(FKEYS[e.key]); return; }
   finishReveal();
 
   if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {

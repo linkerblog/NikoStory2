@@ -41,8 +41,10 @@ export function readItems(db: Db): Item[] {
 }
 
 // A malformed items file is rejected, not trusted: an unknown zone, a tile outside its map, a `reveals`
-// id the scene does not know or a duplicate id would each corrupt the world silently otherwise.
-export function loadItems(dataDir: string, zoneOf: (id: string) => Zone | undefined, scene: Scene): ItemSeed[] {
+// id the scene does not know or a duplicate id would each corrupt the world silently otherwise. An item with
+// `on` follows the home the save drew: it moves to that object of the home, so the letter always lies on the
+// table and the key stays in the wardrobe, whichever home the game opened in.
+export function loadItems(dataDir: string, zoneOf: (id: string) => Zone | undefined, scene: Scene, home?: Zone): ItemSeed[] {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(`${dataDir}/items.json`, "utf-8"));
@@ -57,9 +59,19 @@ export function loadItems(dataDir: string, zoneOf: (id: string) => Zone | undefi
     if (seen.has(i.id)) throw new Error(`items.json has a duplicate id ${i.id}`);
     seen.add(i.id);
     if (typeof i.name !== "string" || !i.name) throw new Error(`items.json item ${i.id} needs a name`);
-    const zone = typeof i.zone_id === "string" ? zoneOf(i.zone_id) : undefined;
+    if (i.on !== undefined && (typeof i.on !== "string" || !i.on)) throw new Error(`items.json item ${i.id} needs \`on\` to be an object id`);
+    let zone: Zone | undefined;
+    let { x, y } = i;
+    if (i.on !== undefined && home && home.id !== i.zone_id) {
+      // The save opened in another home, so the authored house of the file is not even in it.
+      const spot = home.objects.find((o) => o.id === i.on);
+      if (!spot) throw new Error(`items.json item ${i.id} wants the object ${i.on}, which home ${home.id} lacks`);
+      zone = home; x = spot.x; y = spot.y;
+    } else {
+      zone = typeof i.zone_id === "string" ? zoneOf(i.zone_id) : undefined;
+    }
     if (!zone) throw new Error(`items.json item ${i.id} is in unknown zone ${i.zone_id}`);
-    if (!Number.isInteger(i.x) || !Number.isInteger(i.y) || i.x < 0 || i.y < 0 || i.x >= zone.width || i.y >= zone.height) {
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= zone.width || y >= zone.height) {
       throw new Error(`items.json item ${i.id} is outside zone ${zone.id}`);
     }
     const data: ItemData = i.data ?? {};
@@ -69,7 +81,7 @@ export function loadItems(dataDir: string, zoneOf: (id: string) => Zone | undefi
     if (data.reveals !== undefined && typeof data.text !== "string") {
       throw new Error(`items.json item ${i.id} reveals a fact but has no text to read`);
     }
-    return { id: i.id, name: i.name, zone_id: zone.id, x: i.x, y: i.y, hidden: i.hidden ? 1 : 0, data };
+    return { id: i.id, name: i.name, zone_id: zone.id, x, y, hidden: i.hidden ? 1 : 0, data };
   });
 }
 

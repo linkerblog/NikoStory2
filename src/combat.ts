@@ -38,7 +38,7 @@ export const DEFAULT_COMBAT: CombatRules = {
 };
 
 // The keys of `entities.data` that belong to the health rules. They never reach a prompt.
-const HIDDEN_KEYS = new Set(["hp", "hp_max", "guard_until", "downed_until"]);
+const HIDDEN_KEYS = new Set(["hp", "hp_max", "guard_until", "downed_until", "trail"]);
 
 export function publicData(data: Record<string, any>): Record<string, any> {
   return Object.fromEntries(Object.entries(data).filter(([k]) => !HIDDEN_KEYS.has(k)));

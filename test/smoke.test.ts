@@ -222,7 +222,7 @@ test("the stakes migration applies on a database from the previous version", () 
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const tables = (db2.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
     .map((r) => r.name);
   for (const t of ["agenda_state", "conversations", "facts_known"]) assert.ok(tables.includes(t));
@@ -241,7 +241,7 @@ test("the story_summary migration applies on top of a v0.4.0 database and keeps 
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal((db2.prepare("SELECT COUNT(*) c FROM story_summary").get() as { c: number }).c, 0);
   assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
   db2.close();
@@ -268,7 +268,7 @@ test("the conversation-participants migration backfills existing rows on a pre-v
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const row = db2.prepare("SELECT npc_id, initiator_id, listener_id, beat FROM conversations WHERE id = 1").get() as
     { npc_id: string; initiator_id: string; listener_id: string; beat: number };
   assert.equal(row.npc_id, "marta");
@@ -296,7 +296,7 @@ test("migration 7 applies on a v0.6.0 database and seeds the items once", async 
   const g2 = create(path);
   await g2.engine.start();
   const migrations = (g2.db.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.deepEqual((itemRows(g2.db) as { id: string }[]).map((r) => r.id), ["house_key", "letter"]);
   assert.equal(g2.engine.state().tick, 1); // the old game is untouched
   assert.equal((g2.db.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");

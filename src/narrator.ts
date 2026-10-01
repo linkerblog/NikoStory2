@@ -121,6 +121,10 @@ Rules:
 - End on pressure, a question or a visible choice.
 - Do not decide for Niko: tell what happens and what he perceives. Do not invent characters or objects that are not in the situation.
 - The world facts in the situation are true; do not contradict them and do not invent new ones.
+- world.style is the voice and format of every narration: follow it.
+- world.life is how ordinary days go here: use it for small details of texture, never as plot and never as a new fact.
+- world.premise is how Niko came to this world: use it for the fall and the landing, never retell it.
+- world.protagonist is who Niko is. It is background: narrate only what the events show, never an ability or a trait the events do not.
 - While arrival.phase is "fall", Niko is alone in the open air: no other character is with him, near him or able to see him, and visible_characters is empty.
 - When scene.justResolved is true, Niko has just learned the answer to the scene question (scene.goal): close the beat on that answer.
 Respond ONLY with JSON: {"narration": string}.`;
