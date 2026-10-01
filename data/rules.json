@@ -3,6 +3,7 @@
   "maxPathSteps": 6,
   "summaryEveryTicks": 20,
   "npcThinkEveryTicks": 3,
+  "inventorySlots": 8,
   "abilities": [
     {
       "id": "brace",

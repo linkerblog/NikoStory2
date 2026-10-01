@@ -30,7 +30,9 @@ export interface Context {
   summary?: string | null;
   lastMove?: string | null;
   recentNarrations?: string[];
-  scene?: { question: string; knownFacts: string[] };
+  // `resolved` stays true once Niko knows the goal's facts; `justResolved` is true only on the turn
+  // that completes them, which is the one the narrator closes on the answer.
+  scene?: { question: string; knownFacts: string[]; goal?: string; resolved?: boolean; justResolved?: boolean };
   conversation?: ConversationContext | null;
   memory?: MemoryQuery;
   world?: WorldFacts;
@@ -118,6 +120,7 @@ Rules:
 - End on pressure, a question or a visible choice.
 - Do not decide for Niko: tell what happens and what he perceives. Do not invent characters or objects that are not in the situation.
 - The world facts in the situation are true; do not contradict them and do not invent new ones.
+- When scene.justResolved is true, Niko has just learned the answer to the scene question (scene.goal): close the beat on that answer.
 Respond ONLY with JSON: {"narration": string}.`;
 
 export const RETRY_HINT =

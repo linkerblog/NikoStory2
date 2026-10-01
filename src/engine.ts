@@ -14,9 +14,10 @@ import { DEFAULT_STAKES_RULES, chebyshev, directionWord, proximityLabel, type Sc
 import { DEFAULT_RULES, type GameRules } from "./rules.js";
 import { describeEffect, keywordsOf, type Effect, type Interpretation, type InterpretContext, type Interpreter } from "./interpreter.js";
 import type { NpcContext, NpcDecision, NpcDecider } from "./npc.js";
-import type { Action, Dir, ReplyChoice } from "./actions.js";
+import type { Action, Dir, ItemRef, ItemVerb, ReplyChoice } from "./actions.js";
+import { readItems, type Item } from "./items.js";
 
-export type { Action, Dir, ReplyChoice } from "./actions.js";
+export type { Action, Dir, ItemVerb, ReplyChoice } from "./actions.js";
 export { parseFreeAction } from "./actions.js";
 export type { Effect, Interpretation } from "./interpreter.js";
 
@@ -56,7 +57,9 @@ const DIR_WORD: Record<Dir, string> = { N: "north", S: "south", E: "east", W: "w
 export const VISION_RANGE = 8;
 const MSG_DOOR = "That door is sealed.";
 // Low-importance event kinds keep their deterministic template sentence and cost no model call.
-const TEMPLATE_TYPES = new Set(["move", "wait", "appears"]);
+const TEMPLATE_TYPES = new Set(["move", "wait", "appears", "take", "drop", "search"]);
+const ITEM_VERBS: ReadonlySet<string> = new Set<ItemVerb>(["take", "drop", "search", "read"]);
+const MSG_NO_ITEM = "There is no such item here.";
 
 type Point = { x: number; y: number };
 type Applied = { ok: true; notable: string[] } | { ok: false; error: string };
@@ -174,6 +177,7 @@ export class Engine {
     const names: Record<string, string> = {};
     for (const e of here) names[e.id] = e.name;
     for (const o of z.objects) names[o.id] = o.name;
+    for (const i of readItems(this.db)) names[i.id] = i.name;
     const witnesses = withWitnesses
       ? here.filter((e) => canSee(z, e, { x, y })).map((e) => e.id)
       : [];
@@ -372,6 +376,42 @@ export class Engine {
     return this.scene.facts.filter((f) => ids.includes(f.id)).map((f) => f.text);
   }
 
+  // Items Niko can act on: what he holds and what lies in his zone, not hidden. Hidden items are
+  // invisible to every prompt and to the client until somebody searches the object they are in.
+  private itemsFor(niko: Ent, items: Item[]): ItemRef[] {
+    const z = this.zone;
+    const out: ItemRef[] = [];
+    for (const i of items) {
+      if (i.holder_id === niko.id) out.push({ id: i.id, name: i.name, where: "held" });
+      else if (!i.hidden && i.zone_id === z.id && canSee(z, niko, { x: i.x!, y: i.y! })) out.push({ id: i.id, name: i.name, where: "here" });
+    }
+    return out;
+  }
+
+  private knownFactIds(): Set<string> {
+    return new Set((this.db.prepare("SELECT fact_id FROM facts_known WHERE character_id = 'niko'").all() as
+      { fact_id: string }[]).map((r) => r.fact_id));
+  }
+
+  private sceneResolved(): boolean { return getMeta(this.db, "scene_resolved") !== undefined; }
+
+  // True when every fact the goal requires is known. A scene with no goal is never met.
+  private goalMet(): boolean {
+    const goal = this.scene.goal;
+    if (!goal) return false;
+    const known = this.knownFactIds();
+    return goal.requires.every((id) => known.has(id));
+  }
+
+  // Resolves the scene exactly once, on the turn the last required fact is learned, by conversation
+  // or by reading. The narration of that same turn already saw `justResolved` through `goalMet`.
+  private resolveScene(): void {
+    if (!this.scene.goal || this.sceneResolved() || !this.goalMet()) return;
+    const niko = this.ents().find((e) => e.id === "niko")!;
+    setMeta(this.db, "scene_resolved", String(this.tick()));
+    this.record("scene_resolved", niko.x, niko.y, "niko", { goal_id: this.scene.goal.id }, true);
+  }
+
   private storySoFar(): string | null {
     const row = this.db.prepare("SELECT text FROM story_summary ORDER BY id DESC LIMIT 1").get() as
       { text: string } | undefined;
@@ -428,7 +468,14 @@ export class Engine {
       summary: this.storySoFar(),
       lastMove: this.lastMove(),
       recentNarrations: this.recentNarrations(this.stakes.promptNarrations),
-      scene: { question: this.scene.question, knownFacts: this.knownFacts() },
+      scene: {
+        question: this.scene.question,
+        knownFacts: this.knownFacts(),
+        // The goal text is the story's answer: it reaches the narrator only once Niko knows it.
+        goal: this.goalMet() ? this.scene.goal?.text : undefined,
+        resolved: this.sceneResolved() || this.goalMet(),
+        justResolved: !this.sceneResolved() && this.goalMet(),
+      },
       conversation: convo && convoNpc
         ? { npc: convoNpc.name, beat: convo.beat, maxBeats: this.stakes.maxBeats, want: this.agendaOf(convoNpc)?.want ?? "" }
         : null,
@@ -473,6 +520,7 @@ export class Engine {
         proximity: proximityLabel(chebyshev(niko, e), this.stakes),
         direction: directionWord(niko, e),
       })),
+      items: this.itemsFor(niko, readItems(this.db)),
       conversation: convo && convoNpc
         ? { npc_id: convo.npc_id, npc: convoNpc.name, beat: convo.beat, want: this.agendaOf(convoNpc)?.want ?? "" }
         : null,
@@ -511,6 +559,7 @@ export class Engine {
     try {
       const r = await this.runTurn(a);
       if (r.ok) {
+        this.resolveScene();
         await this.flushMemories();
         await this.maybeSummarize();
       }
@@ -632,9 +681,68 @@ export class Engine {
         return this.applyAction({ type: "leave", target: convo.npc_id });
       }
       case "interact":
-        return this.applyAction({ type: "examine", target: e.target });
+        if (e.verb === "examine") return this.applyAction({ type: "examine", target: e.target });
+        if (ITEM_VERBS.has(e.verb)) return this.applyAction({ type: "item", verb: e.verb as ItemVerb, target: e.target });
+        return { ok: false, error: "Niko cannot do that with it." };
       case "ability":
         return this.applyAction({ type: "ability", id: e.id, target: e.target });
+    }
+  }
+
+  // The four item verbs. Every precondition is checked before any row changes, so a rejected verb
+  // leaves no tick and no event. A hidden item answers like a missing one, so nothing leaks.
+  private applyItem(a: { verb: ItemVerb; target: string }, niko: Ent): Applied {
+    const z = this.zone;
+    const items = readItems(this.db);
+    const itemAt = (i: Item | undefined): i is Item => !!i && !i.hidden && i.zone_id === z.id;
+    switch (a.verb) {
+      case "take": {
+        const it = items.find((i) => i.id === a.target);
+        if (!itemAt(it)) return { ok: false, error: MSG_NO_ITEM };
+        if (!near(niko, { x: it.x!, y: it.y! })) return { ok: false, error: "That item is out of reach." };
+        if (!it.data.portable) return { ok: false, error: "That cannot be carried." };
+        if (items.filter((i) => i.holder_id === niko.id).length >= this.rules.inventorySlots) {
+          return { ok: false, error: "Niko cannot carry any more." };
+        }
+        this.db.prepare("UPDATE items SET holder_id = ?, zone_id = NULL, x = NULL, y = NULL WHERE id = ?").run(niko.id, it.id);
+        this.record("take", niko.x, niko.y, niko.id, { target: it.id }, true);
+        return { ok: true, notable: [`Niko takes ${it.name}.`] };
+      }
+      case "drop": {
+        const it = items.find((i) => i.id === a.target && i.holder_id === niko.id);
+        if (!it) return { ok: false, error: "Niko is not carrying that." };
+        this.db.prepare("UPDATE items SET holder_id = NULL, zone_id = ?, x = ?, y = ? WHERE id = ?").run(z.id, niko.x, niko.y, it.id);
+        this.record("drop", niko.x, niko.y, niko.id, { target: it.id }, true);
+        return { ok: true, notable: [`Niko drops ${it.name}.`] };
+      }
+      case "search": {
+        const o = z.objects.find((x) => x.id === a.target);
+        if (!o || !near(niko, o)) return { ok: false, error: "You cannot reach that object." };
+        const found = items.filter((i) => i.hidden && i.zone_id === z.id && i.x === o.x && i.y === o.y);
+        for (const i of found) this.db.prepare("UPDATE items SET hidden = 0 WHERE id = ?").run(i.id);
+        this.record("search", niko.x, niko.y, niko.id, { target: o.id, found: found.map((i) => i.id) }, true);
+        return {
+          ok: true,
+          notable: [found.length
+            ? `Niko searches ${o.name} and finds ${found.map((i) => i.name).join(" and ")}.`
+            : `Niko searches ${o.name} and finds nothing.`],
+        };
+      }
+      case "read": {
+        const it = items.find((i) => i.id === a.target && !i.hidden);
+        if (!it || (it.holder_id !== niko.id && !itemAt(it))) return { ok: false, error: MSG_NO_ITEM };
+        if (it.holder_id !== niko.id && !near(niko, { x: it.x!, y: it.y! })) return { ok: false, error: "That item is out of reach." };
+        if (typeof it.data.text !== "string") return { ok: false, error: "There is nothing to read on it." };
+        const factId = it.data.reveals ?? null;
+        // Reading is a second writer of Niko's facts, equal to a conversation; witnesses learn that he
+        // read something, not what it said.
+        if (factId) {
+          this.db.prepare("INSERT OR IGNORE INTO facts_known (character_id, fact_id, tick) VALUES ('niko', ?, ?)")
+            .run(factId, this.tick());
+        }
+        this.record("read", niko.x, niko.y, niko.id, { target: it.id, fact_id: factId }, true);
+        return { ok: true, notable: [`Niko reads ${it.name}: "${it.data.text}"`] };
+      }
     }
   }
 
@@ -715,11 +823,22 @@ export class Engine {
       }
       case "examine": {
         const o = z.objects.find((x) => x.id === a.target);
-        if (!o || !near(niko, o)) return { ok: false, error: "You cannot reach that object." };
+        if (!o) {
+          // An item id is examined like an object, through its authored description.
+          const it = readItems(this.db).find((i) => i.id === a.target && !i.hidden &&
+            (i.holder_id === niko.id || (i.zone_id === z.id && near(niko, { x: i.x!, y: i.y! }))));
+          if (!it) return { ok: false, error: "You cannot reach that object." };
+          this.record("examine", niko.x, niko.y, "niko", { target: it.id }, true);
+          notable.push(`Niko examines ${it.name}.${it.data.description ? ` ${it.data.description}` : ""}`);
+          return { ok: true, notable };
+        }
+        if (!near(niko, o)) return { ok: false, error: "You cannot reach that object." };
         this.record("examine", niko.x, niko.y, "niko", { target: o.id }, true);
         notable.push(`Niko examines ${o.name}.`);
         return { ok: true, notable };
       }
+      case "item":
+        return this.applyItem(a, niko);
       case "ability": {
         const ability = this.rules.abilities[a.id];
         if (!ability) return { ok: false, error: "Niko cannot do that." };
@@ -1002,6 +1121,8 @@ export class Engine {
         return { ok: true, notable: lines };
       }
       case "interact": {
+        // NPCs only examine for now: an item verb is rejected so the `npc` role cannot move items.
+        if (e.verb !== "examine") return { ok: false, error: "That is not something an NPC can do yet." };
         const o = z.objects.find((x) => x.id === e.target);
         if (!o || chebyshev(npc, o) > 1) return { ok: false, error: "That object is out of reach." };
         this.record("examine", npc.x, npc.y, npc.id, { target: o.id }, true);
@@ -1175,6 +1296,7 @@ export class Engine {
         { tick: number; data: string }[]
     ).reverse().map((r) => ({ tick: r.tick, ...JSON.parse(r.data) as { text: string; degraded?: boolean } }));
     const i = Math.min(beat, this.opening.beats.length - 1);
+    const items = readItems(this.db);
     return {
       tick,
       phase,
@@ -1190,6 +1312,19 @@ export class Engine {
       room: roomAt(z, niko.x, niko.y),
       niko: { x: niko.x, y: niko.y, ether: niko.data.ether, ether_max: niko.data.ether_max },
       npcs: this.visibleActors(niko, ents).map((e) => ({ id: e.id, name: e.name, x: e.x, y: e.y })),
+      inventory: items.filter((i) => i.holder_id === niko.id).map((i) => ({ id: i.id, name: i.name })),
+      items: items
+        .filter((i) => !i.hidden && i.zone_id === z.id)
+        .map((i) => ({ id: i.id, name: i.name, x: i.x!, y: i.y! })),
+      // Only what Niko knows is sent: the facts behind an unmet goal never reach the client.
+      scene: {
+        question: this.scene.question,
+        goal: this.scene.goal
+          ? { id: this.scene.goal.id, text: this.sceneResolved() ? this.scene.goal.text : null }
+          : null,
+        known: this.knownFacts(),
+        resolved: this.sceneResolved(),
+      },
       log: narr.map((n) => ({ tick: n.tick, text: n.text, degraded: !!n.degraded })),
     };
   }

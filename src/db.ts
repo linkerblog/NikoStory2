@@ -79,6 +79,17 @@ const MIGRATIONS: string[] = [
    ALTER TABLE conversations ADD COLUMN listener_id TEXT;
    UPDATE conversations SET initiator_id = 'niko' WHERE initiator_id IS NULL;
    UPDATE conversations SET listener_id = npc_id WHERE listener_id IS NULL;`,
+  `CREATE TABLE items (
+     id        TEXT PRIMARY KEY,
+     name      TEXT NOT NULL,
+     zone_id   TEXT,
+     x         INTEGER,
+     y         INTEGER,
+     holder_id TEXT,
+     hidden    INTEGER NOT NULL DEFAULT 0,
+     data      TEXT NOT NULL DEFAULT '{}',
+     CHECK ((holder_id IS NULL) <> (zone_id IS NULL))
+   );`,
 ];
 
 export function openDb(path: string): Db {
@@ -114,6 +125,7 @@ export function clearSave(db: Db): void {
       DELETE FROM facts_known;
       DELETE FROM llm_calls;
       DELETE FROM story_summary;
+      DELETE FROM items;
       DELETE FROM entities;
       DELETE FROM settings;
       DELETE FROM zones;

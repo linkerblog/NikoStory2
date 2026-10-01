@@ -222,7 +222,7 @@ test("the stakes migration applies on a database from the previous version", () 
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7]);
   const tables = (db2.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
     .map((r) => r.name);
   for (const t of ["agenda_state", "conversations", "facts_known"]) assert.ok(tables.includes(t));
@@ -241,7 +241,7 @@ test("the story_summary migration applies on top of a v0.4.0 database and keeps 
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7]);
   assert.equal((db2.prepare("SELECT COUNT(*) c FROM story_summary").get() as { c: number }).c, 0);
   assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
   db2.close();
@@ -268,7 +268,7 @@ test("the conversation-participants migration backfills existing rows on a pre-v
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7]);
   const row = db2.prepare("SELECT npc_id, initiator_id, listener_id, beat FROM conversations WHERE id = 1").get() as
     { npc_id: string; initiator_id: string; listener_id: string; beat: number };
   assert.equal(row.npc_id, "marta");
@@ -276,4 +276,71 @@ test("the conversation-participants migration backfills existing rows on a pre-v
   assert.equal(row.listener_id, "marta");
   assert.equal(row.beat, 2); // existing data is untouched
   db2.close();
+});
+
+const itemRows = (db: ReturnType<typeof openDb>) =>
+  db.prepare("SELECT id, zone_id, x, y, holder_id, hidden FROM items ORDER BY id").all();
+
+test("migration 7 applies on a v0.6.0 database and seeds the items once", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "niko-mig7-")), "game.db");
+  const g1 = create(path);
+  await g1.engine.start();
+  await g1.engine.takeTurn({ type: "wait" });
+  // A v0.6.0 save has no items table, no seed marker and a game already under way.
+  g1.db.exec("DROP TABLE items");
+  g1.db.prepare("DELETE FROM migrations WHERE n = 7").run();
+  g1.db.prepare("DELETE FROM settings WHERE key = 'items_seeded'").run();
+  g1.db.prepare("INSERT INTO settings (key, value) VALUES ('probe', 'kept')").run();
+  g1.db.close();
+
+  const g2 = create(path);
+  await g2.engine.start();
+  const migrations = (g2.db.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual((itemRows(g2.db) as { id: string }[]).map((r) => r.id), ["house_key", "letter"]);
+  assert.equal(g2.engine.state().tick, 1); // the old game is untouched
+  assert.equal((g2.db.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
+  g2.db.close();
+});
+
+test("a restart after a take does not put the item back", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "niko-items-")), "game.db");
+  const g1 = create(path);
+  g1.db.prepare("UPDATE entities SET x = 6, y = 4 WHERE id = 'niko'").run();
+  await g1.engine.start();
+  assert.equal((await g1.engine.takeTurn({ type: "item", verb: "take", target: "letter" })).ok, true);
+  g1.db.close();
+
+  const g2 = create(path);
+  await g2.engine.start();
+  assert.deepEqual(g2.engine.state().inventory.map((i) => i.id), ["letter"]);
+  assert.equal((g2.db.prepare("SELECT COUNT(*) c FROM items WHERE id = 'letter'").get() as { c: number }).c, 1);
+  assert.ok(!g2.engine.state().items.some((i) => i.id === "letter"));
+  g2.db.close();
+});
+
+test("same seed and same actions give the same item state", async () => {
+  const run = async () => {
+    const g = create();
+    g.db.prepare("UPDATE entities SET x = 7, y = 8 WHERE id = 'niko'").run();
+    await g.engine.start();
+    await g.engine.takeTurn({ type: "item", verb: "search", target: "wardrobe" });
+    await g.engine.takeTurn({ type: "item", verb: "take", target: "house_key" });
+    await g.engine.takeTurn({ type: "move", dir: "N" });
+    await g.engine.takeTurn({ type: "item", verb: "drop", target: "house_key" });
+    return { items: itemRows(g.db), state: g.engine.state() };
+  };
+  const a = await run(), b = await run();
+  assert.deepEqual(a.items, b.items);
+  assert.deepEqual(a.state.items, b.state.items);
+  assert.deepEqual(a.state.inventory, b.state.inventory);
+});
+
+test("a reset plants the items again", async () => {
+  const g = create();
+  g.db.prepare("UPDATE entities SET x = 6, y = 4 WHERE id = 'niko'").run();
+  await g.engine.start();
+  await g.engine.takeTurn({ type: "item", verb: "take", target: "letter" });
+  await g.reset();
+  assert.deepEqual((itemRows(g.db) as { id: string; holder_id: string | null }[]).map((r) => [r.id, r.holder_id]), [["house_key", null], ["letter", null]]);
 });

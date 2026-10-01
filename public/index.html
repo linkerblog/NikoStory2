@@ -90,7 +90,8 @@
   .legend { margin-top: var(--s3); color: var(--fg-dim); font-size: 12px; }
   .legend b { font-weight: 600; }
   .g-niko { color: var(--accent); } .g-npc { color: var(--warn); }
-  .g-door { color: var(--warn); } .g-obj { color: var(--accent-2); }
+  .g-door { color: var(--warn); } .g-obj { color: var(--accent-2); } .g-item { color: var(--accent); }
+  #map.over-item { cursor: pointer; }
 
   /* Status + nearby */
   .stat-name { color: var(--accent); font-weight: 600; margin-bottom: var(--s2); }
@@ -104,6 +105,8 @@
     color: var(--fg-dim); font-weight: 600; font-size: 13px; letter-spacing: 0.5px;
   }
   .near { color: var(--fg); }
+  .goal-q { color: var(--fg); margin-bottom: var(--s1); }
+  .goal-done { color: var(--accent); font-weight: 600; }
   .dim { color: var(--fg-dim); }
 
   /* Free-text action, the only input, available in every phase */
@@ -242,7 +245,7 @@
       <div class="body" id="map-body">
         <canvas id="map"></canvas>
         <div class="legend">Legend: <b class="g-niko">N</b> you &nbsp; <b class="g-npc">M</b> NPC &nbsp;
-          <b class="g-door">D</b> door &nbsp; <b class="g-obj">&#9642;</b> object &nbsp;&middot;&nbsp; 1 tile = 1 m</div>
+          <b class="g-door">D</b> door &nbsp; <b class="g-obj">&#9642;</b> object &nbsp; <b class="g-item">&#9670;</b> item &nbsp;&middot;&nbsp; 1 tile = 1 m</div>
       </div>
     </section>
 
@@ -256,6 +259,10 @@
       <div class="body" id="status"></div>
       <div class="subhead">[ NEARBY ]</div>
       <div class="body" id="nearby"></div>
+      <div class="subhead">[ INVENTORY ]</div>
+      <div class="body" id="inventory"></div>
+      <div class="subhead">[ GOAL ]</div>
+      <div class="body" id="goal"></div>
     </section>
   </div>
 
@@ -297,7 +304,7 @@
     <dl>
       <dt><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd> / <kbd>WASD</kbd></dt><dd>Move Niko one tile</dd>
       <dt><kbd>Space</kbd></dt><dd>Wait one turn</dd>
-      <dt>free text</dt><dd>Type anything in the Actions box or the command line: go north, talk to Marta, wait, examine the crate. The interpreter reads it and the engine decides.</dd>
+      <dt>free text</dt><dd>Type anything in the Actions box or the command line: go north, talk to Marta, wait, examine the crate, take the letter, read it. The interpreter reads it and the engine decides.</dd>
       <dt><kbd>/</kbd></dt><dd>Focus the command line</dd>
       <dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> in the command line</dt><dd>Browse command history</dd>
       <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Cycle focus between panels</dd>
@@ -495,6 +502,11 @@ function drawMap() {
     cx.textAlign = "center"; cx.textBaseline = "middle";
     cx.fillText(o.name.replace(/^the /, "")[0].toUpperCase(), o.x * C + C / 2, o.y * C + C / 2);
   }
+  for (const i of S.items || []) {
+    cx.fillStyle = T.accent; cx.font = `bold ${Math.max(9, Math.round(C * 0.5))}px ` + cssVar("--font");
+    cx.textAlign = "center"; cx.textBaseline = "middle";
+    cx.fillText("◆", i.x * C + C / 2, i.y * C + C / 2);
+  }
   for (const n of S.npcs) token(n.x, n.y, T.warn, n.name[0]);
   token(S.niko.x, S.niko.y, T.accent, "N");
 }
@@ -559,7 +571,35 @@ function renderStatus() {
   $("nearby").innerHTML = S.npcs.length
     ? S.npcs.map((n) => `<div class="near">\u25b8 ${esc(n.name)}</div>`).join("")
     : `<div class="near dim">\u00b7 no one in sight</div>`;
+  const inv = S.inventory || [];
+  $("inventory").innerHTML = inv.length
+    ? inv.map((i) => `<div class="near">\u25c6 ${esc(i.name)}</div>`).join("")
+    : `<div class="near dim">\u00b7 nothing carried</div>`;
+  const sc = S.scene;
+  if (!sc || !sc.goal) { $("goal").innerHTML = `<div class="near dim">\u00b7 no goal in this scene</div>`; return; }
+  const known = sc.known.map((k) => `<div class="near dim">\u25b8 ${esc(k)}</div>`).join("");
+  $("goal").innerHTML = `<div class="goal-q">${esc(sc.question)}</div>` + known +
+    (sc.resolved
+      ? `<div class="goal-done">\u2713 Resolved: ${esc(sc.goal.text ?? "")}</div>`
+      : `<div class="near dim">\u00b7 unresolved</div>`);
 }
+
+// Clicking an item on the map only fills the command line; the engine decides what happens.
+function itemAt(ev) {
+  if (!S || S.phase === "fall") return null;
+  const r = cv.getBoundingClientRect();
+  const x = Math.floor((ev.clientX - r.left) * (cv.width / r.width) / C);
+  const y = Math.floor((ev.clientY - r.top) * (cv.height / r.height) / C);
+  return (S.items || []).find((i) => i.x === x && i.y === y) || null;
+}
+cv.addEventListener("mousemove", (ev) => cv.classList.toggle("over-item", !!itemAt(ev)));
+cv.addEventListener("click", (ev) => {
+  const it = itemAt(ev);
+  if (!it) return;
+  const cmd = $("cmd");
+  cmd.value = `take ${it.name}`;
+  cmd.focus();
+});
 
 // Free text is the only input: the interpreter reads it and the engine decides what happens.
 function renderActions() {
@@ -837,8 +877,13 @@ addEventListener("keydown", (e) => {
 
   if (gPending) {
     gPending = false;
-    const dest = { m: "map", l: "log", s: "status", i: "status" }[e.key.toLowerCase()];
-    if (dest) { e.preventDefault(); setTab(dest); focusPanel(dest); return; }
+    const key = e.key.toLowerCase();
+    const dest = { m: "map", l: "log", s: "status", i: "status" }[key];
+    if (dest) {
+      e.preventDefault(); setTab(dest); focusPanel(dest);
+      if (key === "i") $("inventory").scrollIntoView({ block: "nearest" });
+      return;
+    }
   }
   if (e.key === "g") { gPending = true; return; }
 

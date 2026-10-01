@@ -11,11 +11,12 @@ localhost. The world lives in one SQLite file; the browser draws the state and s
 Narration is optional and comes from an LLM through OpenRouter, falling back to an offline
 template narrator with no network and no cost.
 
-Current scope (prototype v0.6.0): one hand-made house zone, a scripted three-beat fall that opens a
+Current scope (prototype v0.7.0): one hand-made house zone, a scripted three-beat fall that opens a
 new game, Niko, two NPCs with data-driven agendas and an optional `npc` role that proposes their
 actions, a tick clock, Ether with regeneration, line-of-sight perception and events stored with their
-witnesses. Free text is the only input: an interpreter role turns it into typed effects the engine
-validates. What is and is not implemented is listed in `README.md`.
+witnesses, portable items with `take`/`drop`/`search`/`read` and a scene goal. Free text is the only
+input: an interpreter role turns it into typed effects the engine validates. What is and is not
+implemented is listed in `README.md`.
 
 ## Architecture rules (do not break)
 
@@ -77,7 +78,9 @@ validates. What is and is not implemented is listed in `README.md`.
   ranked recall are implemented).
 - NPC knowledge of facts, beliefs and relationships; NPCs still do not read `facts_known`.
 - Zone generation. The south door (`D`) is the trigger and currently only prints a message.
-- Combat, health and inventory. Only `brace` exists in `data/rules.json`; an `ability` effect other
+- Combat, health and equipment. Only `brace` exists in `data/rules.json`; an `ability` effect other
   than a declared ability is rejected.
+- `give`, `use`, locks, containers, items for NPCs (they cannot take or read yet) and a scene after
+  `scene_resolved`. The letter text and the goal text are placeholders until the author writes them.
 - Adult ops: no sexual action exists yet. When one is added it must be adults-only and require
   consent from every party as op preconditions in code; Niko consents only if the player chooses so.

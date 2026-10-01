@@ -1,5 +1,10 @@
 {
   "question": "Why did Niko fall into this world?",
+  "goal": {
+    "id": "why_niko_fell",
+    "text": "<authored by the user>",
+    "requires": ["fact_marta_warning", "fact_letter_text"]
+  },
   "facts": [
     {
       "id": "fact_marta_warning",
@@ -10,6 +15,11 @@
       "id": "fact_ivy_letter",
       "text": "Ivy found a letter addressed to Niko on the kitchen table.",
       "revealed_by": "ivy_letter"
+    },
+    {
+      "id": "fact_letter_text",
+      "text": "<authored by the user>",
+      "revealed_by": "letter"
     }
   ]
 }

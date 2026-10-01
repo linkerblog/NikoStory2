@@ -1,4 +1,4 @@
-import { parseFreeAction, type Action, type Dir, type ReplyChoice } from "./actions.js";
+import { parseFreeAction, type Action, type Dir, type ItemRef, type ReplyChoice } from "./actions.js";
 import { extractJson, type LlmClient } from "./llm.js";
 import type { DeltaSink } from "./narrator.js";
 import type { GameRules } from "./rules.js";
@@ -11,7 +11,7 @@ export type Effect =
   | { kind: "wait" }
   | { kind: "speak"; to: string | null; text: string; tone?: ReplyChoice }
   | { kind: "end_conversation" }
-  | { kind: "interact"; target: string; verb: string }  // object ids only
+  | { kind: "interact"; target: string; verb: string }  // object or item ids; the engine closes the verb list
   | { kind: "ability"; id: string; target?: string };
 
 export interface Interpretation {
@@ -30,6 +30,9 @@ export interface InterpretContext {
   zone: Zone;
   ents: Ent[];
   visible: { id: string; name: string; proximity: string; direction: string }[];
+  // Niko's inventory plus the non-hidden items he can see. A hidden item is never sent, so the model
+  // cannot take what nobody has found.
+  items: ItemRef[];
   conversation: { npc_id: string; npc: string; beat: number; want: string } | null;
   memories: string[];
   summary: string | null;
@@ -69,6 +72,7 @@ export function actionToEffects(a: Action): Effect[] {
     case "reply": return [{ kind: "speak", to: a.target, text: "", tone: a.choice }];
     case "leave": return [{ kind: "end_conversation" }];
     case "examine": return [{ kind: "interact", target: a.target, verb: "examine" }];
+    case "item": return [{ kind: "interact", target: a.target, verb: a.verb }];
     case "say": return [{ kind: "speak", to: null, text: a.text }];
     case "ability": return [{ kind: "ability", id: a.id, target: a.target }];
     default: return [{ kind: "wait" }];
@@ -77,7 +81,7 @@ export function actionToEffects(a: Action): Effect[] {
 
 export class OfflineInterpreter implements Interpreter {
   async interpret(c: InterpretContext, _onDelta?: DeltaSink): Promise<Interpretation> {
-    const mapped = parseFreeAction(c.text, c.zone, c.ents, c.conversation ?? undefined);
+    const mapped = parseFreeAction(c.text, c.zone, c.ents, c.conversation ?? undefined, c.items);
     return mapped
       ? { effects: actionToEffects(mapped), keywords: keywordsOf(c.text) }
       : { effects: [{ kind: "speak", to: null, text: c.text }], keywords: keywordsOf(c.text) };
@@ -96,6 +100,15 @@ export function describeEffect(e: Effect): string {
 }
 
 const DIRS: Dir[] = ["N", "S", "E", "W"];
+
+// Models say "open" for what the engine calls a search and "grab" for a take. Any other verb is kept
+// as given: the engine rejects it with a reason instead of silently turning it into an examine.
+const VERB_ALIASES: Record<string, string> = { open: "search", grab: "take", pick_up: "take", pickup: "take" };
+function normalizeVerb(v: unknown): string {
+  if (typeof v !== "string" || !v.trim()) return "examine";
+  const verb = v.trim().toLowerCase().replace(/\s+/g, "_");
+  return VERB_ALIASES[verb] ?? verb;
+}
 
 export function sanitizeEffect(e: any): Effect | null {
   if (!e || typeof e !== "object") return null;
@@ -118,7 +131,7 @@ export function sanitizeEffect(e: any): Effect | null {
       return { kind: "end_conversation" };
     case "interact": {
       if (typeof e.target !== "string" || !e.target) return null;
-      return { kind: "interact", target: e.target, verb: typeof e.verb === "string" && e.verb ? e.verb : "examine" };
+      return { kind: "interact", target: e.target, verb: normalizeVerb(e.verb) };
     }
     case "ability": {
       if (typeof e.id !== "string" || !e.id) return null;
@@ -164,7 +177,7 @@ Rules:
   {"kind":"wait"}
   {"kind":"speak","to":"<character id or null>","text":"<the player's own words>","tone":"ask|reassure|press"}
   {"kind":"end_conversation"}
-  {"kind":"interact","target":"<object id>","verb":"examine|open|take"}
+  {"kind":"interact","target":"<object or item id>","verb":"examine|search|take|drop|read"}  (search targets an object, take/drop/read an item)
   {"kind":"ability","id":"<ability id>","target":"<id, optional>"}
 - Keep speak.text in the player's own words and language; do not rewrite it as narration.
 - If nothing in the text can be done under these rules, return {"effects":[],"impossible":{"reason":"<short reason, in ${language}>"}}.
@@ -196,6 +209,7 @@ export class OpenRouterInterpreter implements Interpreter {
         doors: (c.zone.portals ?? []).map((p) => ({ label: p.label, to: p.to })),
       },
       visible_characters: c.visible,
+      items: c.items,
       conversation: c.conversation,
       niko_memories: c.memories,
       story_so_far: c.summary,

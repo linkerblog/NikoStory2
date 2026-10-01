@@ -7,6 +7,7 @@ import { loadScene, loadStakesRules, type StakesRules } from "./stakes.js";
 import { loadRules, type GameRules } from "./rules.js";
 import { OfflineNarrator, type DeltaSink } from "./narrator.js";
 import { OfflineInterpreter } from "./interpreter.js";
+import { loadItems, seedItems } from "./items.js";
 
 // The game builds its roles from the environment. Tests pass the offline roles (or a stub), the
 // server passes OpenRouter-backed ones when a key and a model are configured.
@@ -26,6 +27,9 @@ export function createGame(
   const stakes = loadStakesRules(dataDir);
   const gameRules = loadRules(dataDir);
   const scene = loadScene(dataDir);
+  // Items are validated against the zones and the scene facts, then inserted once per save.
+  const plantItems = () => seedItems(db, loadItems(dataDir, (id) => zones.get(id), scene));
+  plantItems();
   const opening = loadOpening(dataDir, house);
   const world = loadWorld(dataDir);
   const engine = new Engine(db, zones, servicesFor(db, memory, stakes, gameRules), gameRules, memory, stakes, scene, opening, world);
@@ -36,6 +40,7 @@ export function createGame(
     seed(db, dataDir, seedValue);
     zones.clear();
     ensureWorld(db, dataDir, seedValue, zones);
+    plantItems();
     await engine.start(onDelta);
   };
   return { db, engine, reset };

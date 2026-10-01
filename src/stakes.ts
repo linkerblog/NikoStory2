@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import type { Point } from "./agenda.js";
 
 export interface SceneFact { id: string; text: string; revealed_by: string }
-export interface Scene { question: string; facts: SceneFact[] }
+// The scene's answer: resolved once, when Niko knows every required fact. A scene with no goal
+// never resolves, so a data file without one behaves as before.
+export interface SceneGoal { id: string; text: string; requires: string[] }
+export interface Scene { question: string; facts: SceneFact[]; goal?: SceneGoal }
 
 // Provisional values, tunable in data without a code change.
 export interface StakesRules {
@@ -32,7 +35,17 @@ export function loadStakesRules(dataDir: string): StakesRules {
 
 export function loadScene(dataDir: string): Scene {
   const scene = read<Scene>(`${dataDir}/scene.json`);
-  return { question: scene.question ?? "", facts: scene.facts ?? [] };
+  const facts = scene.facts ?? [];
+  const goal = scene.goal;
+  if (goal === undefined) return { question: scene.question ?? "", facts };
+  if (typeof goal?.id !== "string" || !goal.id) throw new Error("scene.json goal needs an id");
+  if (typeof goal.text !== "string") throw new Error("scene.json goal needs a text");
+  if (!Array.isArray(goal.requires) || goal.requires.length === 0) throw new Error("scene.json goal needs a requires list");
+  const known = new Set(facts.map((f) => f.id));
+  for (const id of goal.requires) {
+    if (!known.has(id)) throw new Error(`scene.json goal requires unknown fact ${id}`);
+  }
+  return { question: scene.question ?? "", facts, goal: { id: goal.id, text: goal.text, requires: goal.requires } };
 }
 
 export const chebyshev = (a: Point, b: Point) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));

@@ -4,6 +4,8 @@ import type { Ent, Zone } from "./world.js";
 // engine is the only place that turns one into state, so no actor gets a private shortcut.
 export type Dir = "N" | "S" | "E" | "W";
 export type ReplyChoice = "ask" | "reassure" | "press";
+// `search` targets an object id; the other three target an item id.
+export type ItemVerb = "take" | "drop" | "search" | "read";
 
 export type Action =
   | { type: "move"; dir: Dir }
@@ -12,12 +14,15 @@ export type Action =
   | { type: "reply"; target: string; choice: ReplyChoice }
   | { type: "leave"; target: string }
   | { type: "examine"; target: string }
+  | { type: "item"; verb: ItemVerb; target: string }
   | { type: "say"; text: string }
   | { type: "ability"; id: string; target?: string }
   | { type: "fall"; text: string }
   | { type: "free"; text: string };
 
 export interface OpenConversation { npc_id: string }
+// An item as the parser and the interpreter see it: held by Niko, or visible on a tile in his zone.
+export interface ItemRef { id: string; name: string; where: "held" | "here" }
 
 // The deterministic parser behind the offline interpreter: an unknown line is not an action but a
 // line the narrator answers, so "type anything" keeps working with no model and no network.
@@ -33,6 +38,7 @@ export function parseFreeAction(
   zone: Zone,
   ents: Ent[],
   convo: OpenConversation | undefined,
+  items: ItemRef[] = [],
 ): Action | null {
   const t = text.toLowerCase().trim().replace(/[.!?,;]+$/, "");
   if (!t) return null;
@@ -54,10 +60,36 @@ export function parseFreeAction(
       .find((e) => name && e.name.toLowerCase().includes(name.toLowerCase()));
     if (npc) return { type: "talk", target: npc.id };
   }
-  if (["examine", "inspect", "search", "check", "study", "look", "find", "open", "read"].includes(head)) {
-    const name = t.replace(/^(examine|inspect|search|check|study|look at|look|find|open|read)(\s+the|\s+at)?\s*/, "").trim();
-    const o = zone.objects.find((obj) => name && obj.name.toLowerCase().includes(name.toLowerCase()));
+  const verb = ITEM_VERBS.find(([re]) => re.test(t));
+  if (verb) {
+    const name = nameAfter(t.replace(verb[0], ""));
+    if (!name) return null;
+    const [, itemVerb] = verb;
+    if (itemVerb === "search") {
+      const o = zone.objects.find((obj) => obj.name.toLowerCase().includes(name));
+      return o ? { type: "item", verb: "search", target: o.id } : null;
+    }
+    const pool = items.filter((i) => (itemVerb === "drop" ? i.where === "held" : itemVerb === "take" ? i.where === "here" : true));
+    const it = pool.find((i) => i.name.toLowerCase().includes(name));
+    return it ? { type: "item", verb: itemVerb, target: it.id } : null;
+  }
+  if (["examine", "inspect", "check", "study", "look", "find"].includes(head)) {
+    const name = nameAfter(t.replace(/^(examine|inspect|check|study|look at|look|find)\b/, ""));
+    if (!name) return null;
+    const o = zone.objects.find((obj) => obj.name.toLowerCase().includes(name));
     if (o) return { type: "examine", target: o.id };
+    const it = items.find((i) => i.name.toLowerCase().includes(name));
+    if (it) return { type: "examine", target: it.id };
   }
   return null;
 }
+
+// `open` is a search: the engine resolves it on the object and finds nothing when nothing is hidden.
+const ITEM_VERBS: [RegExp, ItemVerb][] = [
+  [/^(take|grab|get|pick up)\b/, "take"],
+  [/^(drop|put down)\b/, "drop"],
+  [/^(search|open)\b/, "search"],
+  [/^read\b/, "read"],
+];
+
+const nameAfter = (rest: string) => rest.trim().replace(/^(the|a|an|my|at)\s+/, "").trim();

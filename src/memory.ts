@@ -18,7 +18,7 @@ export interface MemoryRules {
 }
 
 export const DEFAULT_MEMORY_RULES: MemoryRules = {
-  importance: { move: 1, wait: 1, appears: 4, examine: 3, talk: 6, talked: 7 },
+  importance: { move: 1, wait: 1, appears: 4, examine: 3, take: 3, drop: 2, search: 3, read: 6, talk: 6, talked: 7, scene_resolved: 9 },
   defaultImportance: 2,
   recall: {
     recencyWeight: 0.4,
@@ -119,6 +119,26 @@ export function memoryFromEvent(
     }
     case "examine":
       text = `${actor} examined ${name(event.data.target as string | undefined)}.`;
+      break;
+    case "take":
+      text = `${actor} took ${name(event.data.target as string | undefined)}.`;
+      break;
+    case "drop":
+      text = `${actor} dropped ${name(event.data.target as string | undefined)}.`;
+      break;
+    case "search": {
+      const where = name(event.data.target as string | undefined);
+      const found = ((event.data.found as string[] | undefined) ?? []).map((id) => name(id));
+      text = found.length
+        ? `${actor} searched ${where} and found ${found.join(" and ")}.`
+        : `${actor} searched ${where} and found nothing.`;
+      break;
+    }
+    case "read":
+      text = `${actor} read ${name(event.data.target as string | undefined)}.`;
+      break;
+    case "scene_resolved":
+      text = `${actor} understood why he fell.`;
       break;
     case "appears":
       text = `${actor} came into view.`;

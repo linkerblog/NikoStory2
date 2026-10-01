@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createGame, offlineServices } from "../src/game.js";
 import { parseFreeAction } from "../src/engine.js";
 import { DEFAULT_RULES } from "../src/rules.js";
-import { OfflineInterpreter, parseInterpretation, type Effect, type InterpretContext, type Interpreter } from "../src/interpreter.js";
+import { OfflineInterpreter, interpreterPrompt, parseInterpretation, type Effect, type InterpretContext, type Interpreter } from "../src/interpreter.js";
 import type { Ent, Zone } from "../src/world.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
@@ -19,7 +19,7 @@ const niko: Ent = { id: "niko", type: "player", name: "Niko", zone_id: "z", x: 2
 const marta: Ent = { id: "marta", type: "npc", name: "Marta", zone_id: "z", x: 3, y: 2, data: {} };
 const ctx = (text: string, conversation: InterpretContext["conversation"] = null): InterpretContext => ({
   text, tick: 0, sheet: {}, ether: 3, etherMax: 100, rules: DEFAULT_RULES,
-  zone, ents: [niko, marta], visible: [], conversation, memories: [], summary: null, recentNarrations: [],
+  zone, ents: [niko, marta], visible: [], items: [], conversation, memories: [], summary: null, recentNarrations: [],
 });
 
 test("OfflineInterpreter returns what parseFreeAction returned, as effects", async () => {
@@ -141,4 +141,76 @@ test("a chain stops at the first rejected effect but keeps what resolved", async
   assert.equal(r.ok, true); // the move happened; the rejection only stops the chain
   assert.equal(engine.state().niko.y, before.niko.y - 1);
   assert.equal(engine.state().tick, before.tick + 1);
+});
+
+test("the offline parser maps take, drop, search and read onto item actions", () => {
+  const items = [
+    { id: "letter", name: "a letter addressed to Niko", where: "here" as const },
+    { id: "coin", name: "a silver coin", where: "held" as const },
+  ];
+  const parse = (t: string) => parseFreeAction(t, zone, [niko, marta], undefined, items);
+  assert.deepEqual(parse("take the letter"), { type: "item", verb: "take", target: "letter" });
+  assert.deepEqual(parse("pick up the letter"), { type: "item", verb: "take", target: "letter" });
+  assert.deepEqual(parse("grab letter!"), { type: "item", verb: "take", target: "letter" });
+  assert.deepEqual(parse("get the letter"), { type: "item", verb: "take", target: "letter" });
+  assert.deepEqual(parse("drop the coin"), { type: "item", verb: "drop", target: "coin" });
+  assert.deepEqual(parse("put down the coin"), { type: "item", verb: "drop", target: "coin" });
+  assert.deepEqual(parse("read the letter"), { type: "item", verb: "read", target: "letter" });
+  assert.deepEqual(parse("read the coin"), { type: "item", verb: "read", target: "coin" });
+  assert.deepEqual(parse("search the crate"), { type: "item", verb: "search", target: "crate" });
+  assert.deepEqual(parse("open the crate"), { type: "item", verb: "search", target: "crate" });
+  // Examine stays an examine, on objects first and then on items.
+  assert.deepEqual(parse("examine the crate"), { type: "examine", target: "crate" });
+  assert.deepEqual(parse("look at the letter"), { type: "examine", target: "letter" });
+  // Only held items can be dropped and only items on the floor can be taken.
+  assert.equal(parse("drop the letter"), null);
+  assert.equal(parse("take the coin"), null);
+  assert.equal(parse("open the ghost"), null);
+  assert.equal(parse("take"), null);
+});
+
+test("an item action becomes an interact effect with its verb", async () => {
+  const items = [{ id: "letter", name: "a letter", where: "here" as const }];
+  const out = await new OfflineInterpreter().interpret({ ...ctx("take the letter"), items });
+  assert.deepEqual(out.effects, [{ kind: "interact", target: "letter", verb: "take" }]);
+});
+
+test("sanitizeEffect maps open to search and grab to take and keeps unknown verbs for the engine", () => {
+  const verb = (v: unknown) =>
+    (parseInterpretation(JSON.stringify({ effects: [{ kind: "interact", target: "x", verb: v }] })).effects[0] as
+      { verb: string }).verb;
+  assert.equal(verb("open"), "search");
+  assert.equal(verb("Open"), "search");
+  assert.equal(verb("grab"), "take");
+  assert.equal(verb("pick up"), "take");
+  assert.equal(verb("read"), "read");
+  assert.equal(verb("EXAMINE"), "examine");
+  assert.equal(verb(undefined), "examine");
+  assert.equal(verb("eat"), "eat"); // the engine rejects it with a reason
+});
+
+test("the interpreter context lists held and visible items and never a hidden one", async () => {
+  const box: { seen?: InterpretContext } = {};
+  const spy: Interpreter = { async interpret(c) { box.seen = c; return { effects: [{ kind: "wait" }], keywords: [] }; } };
+  const { engine, db } = create(spy);
+  db.prepare("UPDATE entities SET x = 7, y = 4 WHERE id = 'niko'").run(); // in the living room, in sight of the letter
+  await engine.start();
+  await engine.takeTurn({ type: "free", text: "look around" });
+  assert.deepEqual(box.seen!.items, [{ id: "letter", name: "a letter addressed to Niko", where: "here" }]);
+  assert.ok(!JSON.stringify(box.seen!.items).includes("house_key"));
+
+  // The wall between the rooms hides the letter, and the key is hidden until it is searched.
+  db.prepare("UPDATE entities SET x = 7, y = 8 WHERE id = 'niko'").run();
+  await engine.takeTurn({ type: "free", text: "look around" });
+  assert.equal(box.seen!.items.length, 0);
+
+  await engine.takeTurn({ type: "item", verb: "search", target: "wardrobe" });
+  await engine.takeTurn({ type: "item", verb: "take", target: "house_key" });
+  // The letter is out of sight from here, so only the held key is listed.
+  await engine.takeTurn({ type: "free", text: "look around again" });
+  assert.deepEqual(box.seen!.items.map((i) => [i.id, i.where]), [["house_key", "held"]]);
+});
+
+test("the interpreter prompt closes the verb list", () => {
+  assert.match(interpreterPrompt(DEFAULT_RULES, "English"), /examine\|search\|take\|drop\|read/);
 });

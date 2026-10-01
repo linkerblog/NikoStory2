@@ -18,6 +18,8 @@ export interface GameRules {
   // How often an NPC may ask the model for a decision: one proposal every N ticks, at most one per
   // player turn. Provisional; a value of 1 asks on every tick an NPC can see Niko.
   npcThinkEveryTicks: number;
+  // How many items Niko can hold at once. Provisional.
+  inventorySlots: number;
   limits: string[];
   risk: string;
 }
@@ -30,6 +32,7 @@ export const DEFAULT_RULES: GameRules = {
   maxPathSteps: 6,
   summaryEveryTicks: 20,
   npcThinkEveryTicks: 3,
+  inventorySlots: 8,
   limits: [],
   risk: "",
 };
@@ -63,6 +66,9 @@ export function loadRules(dataDir: string): GameRules {
   if (raw.npcThinkEveryTicks !== undefined && !positiveInt(raw.npcThinkEveryTicks)) {
     throw new Error("rules.json npcThinkEveryTicks must be a positive integer");
   }
+  if (raw.inventorySlots !== undefined && !positiveInt(raw.inventorySlots)) {
+    throw new Error("rules.json inventorySlots must be a positive integer");
+  }
   if (!Array.isArray(raw.limits) || raw.limits.some((l: unknown) => typeof l !== "string")) {
     throw new Error("rules.json limits must be a list of strings");
   }
@@ -73,6 +79,7 @@ export function loadRules(dataDir: string): GameRules {
     maxPathSteps: raw.maxPathSteps,
     summaryEveryTicks: raw.summaryEveryTicks,
     npcThinkEveryTicks: raw.npcThinkEveryTicks ?? DEFAULT_RULES.npcThinkEveryTicks,
+    inventorySlots: raw.inventorySlots ?? DEFAULT_RULES.inventorySlots,
     limits: raw.limits,
     risk: raw.risk,
   };
