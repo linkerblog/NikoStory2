@@ -4,16 +4,17 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createGame } from "../src/game.js";
-import { canSee } from "../src/engine.js";
+import { createGame, offlineServices } from "../src/game.js";
+import { canSee, type EngineServices } from "../src/engine.js";
 import { openDb } from "../src/db.js";
-import { OfflineNarrator, type Narrator } from "../src/narrator.js";
+import type { Narrator } from "../src/narrator.js";
+import type { Interpreter, InterpretContext } from "../src/interpreter.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 // These suites cover the world after the opening, so they mark the save as past the fall the same
 // way a v0.2.0 database without a `phase` does. The opening itself is covered by `opening.test.ts`.
-const create = (path = ":memory:", seed = 1337, narrator: Narrator = new OfflineNarrator()) => {
-  const g = createGame(path, DATA, seed, () => narrator);
+const create = (path = ":memory:", seed = 1337, overrides: Partial<EngineServices> = {}) => {
+  const g = createGame(path, DATA, seed, () => ({ ...offlineServices(), ...overrides }));
   g.db.prepare("UPDATE settings SET value = 'play' WHERE key = 'phase'").run();
   return g;
 };
@@ -81,10 +82,10 @@ test("a door with no portal is sealed", async () => {
 
 test("an invalid architect draft is discarded for the deterministic building", async () => {
   const bad: Narrator = {
-    async narrate() { return { text: "ok", options: [] }; },
+    async narrate() { return { text: "ok" }; },
     async generateZone() { return { map: ["###", "#.#", "###"] }; }, // wrong size, no door
   };
-  const { engine, db } = create(":memory:", 1337, bad);
+  const { engine, db } = create(":memory:", 1337, { narrator: bad });
   await engine.start();
   db.prepare("UPDATE entities SET zone_id = 'outdoor', x = 6, y = 9 WHERE id = 'niko'").run();
   assert.equal((await engine.takeTurn({ type: "move", dir: "N" })).ok, true);
@@ -96,7 +97,7 @@ test("an invalid architect draft is discarded for the deterministic building", a
 
 test("a valid architect draft is used, keeping the exit and entry walkable", async () => {
   const good: Narrator = {
-    async narrate() { return { text: "ok", options: [] }; },
+    async narrate() { return { text: "ok" }; },
     async generateZone() {
       const map = ["###########"];
       for (let y = 1; y < 8; y++) map.push("#.........#");
@@ -105,7 +106,7 @@ test("a valid architect draft is used, keeping the exit and entry walkable", asy
       return { name: "the tea house", map };
     },
   };
-  const { engine, db } = create(":memory:", 1337, good);
+  const { engine, db } = create(":memory:", 1337, { narrator: good });
   await engine.start();
   db.prepare("UPDATE entities SET zone_id = 'outdoor', x = 6, y = 9 WHERE id = 'niko'").run();
   assert.equal((await engine.takeTurn({ type: "move", dir: "N" })).ok, true);
@@ -135,14 +136,20 @@ test("free text can start a conversation with a nearby NPC", async () => {
   assert.equal(open, 1);
 });
 
-test("options never cross zones", async () => {
-  const { engine, db } = create();
+test("the interpreter never sees characters from another zone", async () => {
+  let seen: InterpretContext | undefined;
+  const spy: Interpreter = {
+    async interpret(c) { seen = c; return { effects: [{ kind: "wait" }], keywords: [] }; },
+  };
+  const { engine, db } = create(":memory:", 1337, { interpreter: spy });
   await engine.start();
   db.prepare("UPDATE entities SET x = 5, y = 6 WHERE id = 'ivy'").run(); // in the house, near the bakery entry coords
   db.prepare("UPDATE entities SET zone_id = 'outdoor', x = 6, y = 9 WHERE id = 'niko'").run();
   assert.equal((await engine.takeTurn({ type: "move", dir: "N" })).ok, true); // into the bakery, Niko at (5,7)
-  const texts = engine.state().options.map((o) => o.text);
-  assert.ok(!texts.some((t) => t.includes("Ivy")), JSON.stringify(texts));
+  assert.equal((await engine.takeTurn({ type: "free", text: "look around" })).ok, true);
+  assert.ok(seen);
+  assert.equal(seen!.zone.id, "building_bakery");
+  assert.ok(!seen!.visible.some((v) => v.name === "Ivy"), JSON.stringify(seen!.visible));
 });
 
 test("perception respects walls", () => {
@@ -205,19 +212,6 @@ test("the game persists between sessions", async () => {
   assert.equal(e2.log.length, e1.log.length);
 });
 
-test("the engine discards options invented by the LLM", async () => {
-  const liar: Narrator = {
-    async narrate() {
-      return { text: "Something happens.", options: [{ id: "fly", text: "Fly" }, { id: "wait", text: "Wait a bit" }] };
-    },
-  };
-  const { engine } = create(":memory:", 1337, liar);
-  await engine.start();
-  const texts = engine.state().options.map((o) => o.text);
-  assert.ok(!texts.includes("Fly"));
-  assert.ok(texts.includes("Wait a bit"));
-});
-
 test("the stakes migration applies on a database from the previous version", () => {
   const path = join(mkdtempSync(join(tmpdir(), "niko-mig3-")), "game.db");
   const db1 = openDb(path);
@@ -228,10 +222,58 @@ test("the stakes migration applies on a database from the previous version", () 
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6]);
   const tables = (db2.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
     .map((r) => r.name);
   for (const t of ["agenda_state", "conversations", "facts_known"]) assert.ok(tables.includes(t));
   assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
+  db2.close();
+});
+
+test("the story_summary migration applies on top of a v0.4.0 database and keeps its rows", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "niko-mig5-")), "game.db");
+  const db1 = openDb(path);
+  db1.prepare("INSERT INTO settings (key, value) VALUES ('probe', 'kept')").run();
+  db1.prepare("INSERT INTO story_summary (upto_tick, text) VALUES (20, 'old summary')").run();
+  db1.exec("DROP TABLE story_summary");
+  db1.prepare("DELETE FROM migrations WHERE n = 5").run();
+  db1.close();
+
+  const db2 = openDb(path);
+  const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6]);
+  assert.equal((db2.prepare("SELECT COUNT(*) c FROM story_summary").get() as { c: number }).c, 0);
+  assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
+  db2.close();
+});
+
+test("the conversation-participants migration backfills existing rows on a pre-v0.6.0 database", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "niko-mig6-")), "game.db");
+  const db1 = openDb(path);
+  // Recreate the pre-migration shape of `conversations` and forget migration 6 applied it.
+  db1.exec("DROP TABLE conversations");
+  db1.exec(`CREATE TABLE conversations (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     npc_id       TEXT    NOT NULL,
+     goal_id      TEXT    NOT NULL,
+     status       TEXT    NOT NULL CHECK (status IN ('open','closed')),
+     beat         INTEGER NOT NULL DEFAULT 0,
+     started_tick INTEGER NOT NULL
+   )`);
+  db1.prepare(
+    "INSERT INTO conversations (npc_id, goal_id, status, beat, started_tick) VALUES ('marta', 'marta_warn', 'open', 2, 5)",
+  ).run();
+  db1.prepare("DELETE FROM migrations WHERE n = 6").run();
+  db1.close();
+
+  const db2 = openDb(path);
+  const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6]);
+  const row = db2.prepare("SELECT npc_id, initiator_id, listener_id, beat FROM conversations WHERE id = 1").get() as
+    { npc_id: string; initiator_id: string; listener_id: string; beat: number };
+  assert.equal(row.npc_id, "marta");
+  assert.equal(row.initiator_id, "niko");
+  assert.equal(row.listener_id, "marta");
+  assert.equal(row.beat, 2); // existing data is untouched
   db2.close();
 });

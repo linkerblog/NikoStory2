@@ -11,22 +11,27 @@ localhost. The world lives in one SQLite file; the browser draws the state and s
 Narration is optional and comes from an LLM through OpenRouter, falling back to an offline
 template narrator with no network and no cost.
 
-Current scope (prototype v0.3.0): one hand-made house zone, a scripted three-beat fall that opens a
-new game, Niko, two NPCs with data-driven agendas, a tick clock, Ether with regeneration,
-line-of-sight perception and events stored with their witnesses. What is and is not implemented is
-listed in `README.md`.
+Current scope (prototype v0.6.0): one hand-made house zone, a scripted three-beat fall that opens a
+new game, Niko, two NPCs with data-driven agendas and an optional `npc` role that proposes their
+actions, a tick clock, Ether with regeneration, line-of-sight perception and events stored with their
+witnesses. Free text is the only input: an interpreter role turns it into typed effects the engine
+validates. What is and is not implemented is listed in `README.md`.
 
 ## Architecture rules (do not break)
 
-- **The engine is the only writer of state.** `src/engine.ts` validates every action, advances the
-  tick and commits changes. The narrator only proposes text and options.
-- **One action API.** The client sends the `Action` union to `POST /api/turn`; the engine is the
+- **The engine is the only writer of state.** `src/engine.ts` validates every action and effect,
+  advances the tick and commits changes. The interpreter only proposes typed effects; the narrator
+  only proposes text.
+- **One action API.** The client sends `move`/`wait`/`fall`/`free` to `POST /api/turn`; the
+  interpreter's effects map onto the same `Action` union in `src/actions.ts`, and the engine is the
   only place that turns an action into state. NPCs move through the same tile checks and the same
   `move` events, so no actor gets a private shortcut through walls.
 - **The client never simulates.** `public/index.html` draws the state from `GET /api/state` and
   sends commands. No game state lives in the DOM or on the canvas.
-- **The LLM proposes, the engine decides.** Narrator options whose `id` is not a real available
-  action are discarded in `Engine.narrate`, which also clamps them to three.
+- **The LLM proposes, the engine decides.** The interpreter may only use ids present in the
+  situation; an effect with an unknown id, a path through a wall or more than `rules.maxEffects`
+  effects is rejected with a reason. Risky outcomes are rolled by the engine with `rngFor`, never by
+  the model.
 - **Reactions come from knowledge.** Every event is stored with its `witnesses`: only the entities
   that could see it (vision range plus line of sight). Nothing reacts to what it did not perceive.
 - **Determinism.** Randomness goes through the stateless seeded RNG (`rngFor(seed, tick, key)` in
@@ -37,8 +42,12 @@ listed in `README.md`.
   `src/db.ts`. Never edit an applied migration and never delete the savegame to change the schema.
 - **Secrets stay local.** `OPENROUTER_API_KEY` lives in `.env` (gitignored) and never reaches the
   client; the server listens on `127.0.0.1` only.
-- **Every LLM call is logged** to the `llm_calls` table with tokens and, when OpenRouter returns
-  it, cost.
+- **Every LLM call is logged** to the `llm_calls` table with its real role (`interpreter`,
+  `narrator`, `architect`, `continuity`, `memory`, `npc`), tokens and, when OpenRouter returns it,
+  cost.
+- **Roles are configured, not hard-coded.** Each role has its own model, reasoning flag and idle
+  timeout (`<ROLE>_MODEL`/`<ROLE>_REASONING`/`<ROLE>_IDLE_MS`); the spend cap is the only global.
+  `post` uses an idle timeout that resets on every chunk, never a total timeout.
 
 ## Commands
 
@@ -66,8 +75,9 @@ listed in `README.md`.
 
 - Beliefs, relationships, embeddings and semantic retrieval of memories (template memories with
   ranked recall are implemented).
-- NPC decisions made by the LLM.
+- NPC knowledge of facts, beliefs and relationships; NPCs still do not read `facts_known`.
 - Zone generation. The south door (`D`) is the trigger and currently only prints a message.
-- Niko's abilities as general actions with an Ether cost; only the opening's `brace` exists.
+- Combat, health and inventory. Only `brace` exists in `data/rules.json`; an `ability` effect other
+  than a declared ability is rejected.
 - Adult ops: no sexual action exists yet. When one is added it must be adults-only and require
   consent from every party as op preconditions in code; Niko consents only if the player chooses so.

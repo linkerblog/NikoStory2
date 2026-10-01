@@ -68,6 +68,17 @@ const MIGRATIONS: string[] = [
      kind         TEXT NOT NULL,
      created_tick INTEGER NOT NULL
    );`,
+  `CREATE TABLE story_summary (
+     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+     upto_tick INTEGER NOT NULL,
+     text      TEXT NOT NULL
+   );`,
+  // Conversations gain two explicit participants so two NPCs can hold one too. `npc_id` keeps its
+  // NOT NULL for old rows and is no longer read by new code; new inserts write the listener there.
+  `ALTER TABLE conversations ADD COLUMN initiator_id TEXT;
+   ALTER TABLE conversations ADD COLUMN listener_id TEXT;
+   UPDATE conversations SET initiator_id = 'niko' WHERE initiator_id IS NULL;
+   UPDATE conversations SET listener_id = npc_id WHERE listener_id IS NULL;`,
 ];
 
 export function openDb(path: string): Db {
@@ -102,6 +113,7 @@ export function clearSave(db: Db): void {
       DELETE FROM conversations;
       DELETE FROM facts_known;
       DELETE FROM llm_calls;
+      DELETE FROM story_summary;
       DELETE FROM entities;
       DELETE FROM settings;
       DELETE FROM zones;

@@ -3,9 +3,23 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { openDb, setMeta, type Db } from "../src/db.js";
 import { loadMemoryRules } from "../src/memory.js";
-import { OfflineNarrator, OpenRouterNarrator, parseNarration, partialNarration, hasTileCount, jaccard, narrationRejected, type Context, type Delta } from "../src/narrator.js";
+import { LlmClient, type LlmConfig, type RoleConfig } from "../src/llm.js";
+import {
+  OfflineNarrator, OpenRouterNarrator, parseContinuity, parseNarration, partialNarration, hasTileCount,
+  jaccard, narrationRejected, type Context, type Delta,
+} from "../src/narrator.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
+
+const role = (over: Partial<RoleConfig> = {}): RoleConfig => ({ model: "m", reasoning: false, idleMs: 5000, ...over });
+const cfg = (over: Partial<LlmConfig> = {}): LlmConfig => ({
+  apiKey: "t", language: "English", spendCapUsd: 0.5,
+  roles: { interpreter: role(), narrator: role(), architect: role(), continuity: role(), memory: role(), npc: role() },
+  ...over,
+});
+const stubDb = () => ({ prepare: () => ({ get: () => ({ t: 0 }), run: () => {} }) }) as unknown as Db;
+const narratorFor = (db: Db, over: Partial<LlmConfig> = {}, rules = loadMemoryRules(DATA)) =>
+  new OpenRouterNarrator(new LlmClient(db, cfg(over)), rules);
 
 const ctx: Context = {
   tick: 0,
@@ -13,19 +27,30 @@ const ctx: Context = {
   place: { name: "Room", description: "" },
   visible: [],
   events: ["Something happens."],
-  actions: [{ id: "wait", label: "Wait" }],
 };
 
-test("parseNarration reads narration and options", () => {
-  const n = parseNarration('{"narration":"Hello","options":[{"id":"wait","text":"Wait"}]}');
+// A fetch stub that answers each call with the next queued content, and counts the calls.
+function stubFetch(contents: string[]) {
+  const original = globalThis.fetch;
+  let calls = 0;
+  (globalThis as { fetch: unknown }).fetch = async () => {
+    const content = contents[Math.min(calls, contents.length - 1)];
+    calls++;
+    return new Response(JSON.stringify({ choices: [{ message: { content } }], usage: {} }), { status: 200 });
+  };
+  return { restore: () => { (globalThis as { fetch: unknown }).fetch = original; }, calls: () => calls };
+}
+
+test("parseNarration reads the narration and no longer requires options", () => {
+  const n = parseNarration('{"narration":"Hello"}');
   assert.equal(n.text, "Hello");
-  assert.deepEqual(n.options, [{ id: "wait", text: "Wait" }]);
+  assert.ok(!("options" in n));
 });
 
-test("parseNarration accepts JSON wrapped in prose or code fences", () => {
-  const n = parseNarration('Here it is:\n```json\n{"narration":"Hi","options":[]}\n```');
-  assert.equal(n.text, "Hi");
-  assert.deepEqual(n.options, []);
+test("parseNarration tolerates prose, fences and old option-bearing events", () => {
+  assert.equal(parseNarration('Here it is:\n```json\n{"narration":"Hi"}\n```').text, "Hi");
+  // A narration event stored by an older version still loads; its options are simply ignored.
+  assert.equal(parseNarration('{"narration":"Old","options":[{"id":"wait","text":"Wait"}]}').text, "Old");
 });
 
 test("parseNarration names an empty or object-less response", () => {
@@ -38,30 +63,23 @@ test("parseNarration blames truncation at max_tokens", () => {
 });
 
 test("parseNarration rejects malformed JSON without leaking the raw parse error", () => {
-  assert.throws(() => parseNarration('{"narration":"x","options":[}'), /not valid JSON/);
+  assert.throws(() => parseNarration('{"narration":"x",]}'), /not valid JSON/);
 });
 
-test("parseNarration drops options with a bad shape", () => {
-  const n = parseNarration('{"narration":"x","options":[{"id":"wait","text":"Wait"},{"id":1},{"text":"No id"}]}');
-  assert.deepEqual(n.options, [{ id: "wait", text: "Wait" }]);
+test("parseContinuity reads the verdict and drops bad problems", () => {
+  assert.deepEqual(parseContinuity('{"ok":true,"problems":[]}'), { ok: true, problems: [] });
+  assert.deepEqual(parseContinuity('{"ok":false,"problems":["inv",3,"real"]}'), { ok: false, problems: ["inv", "real"] });
+  assert.throws(() => parseContinuity("no json"));
 });
 
-test("the LLM narrator falls back to offline when the response has no content", async () => {
-  const db = { prepare: () => ({ get: () => ({ t: 0 }), run: () => {} }) } as unknown as Db;
-  const original = globalThis.fetch;
-  (globalThis as { fetch: unknown }).fetch = async () =>
-    new Response(JSON.stringify({ choices: [{ message: { content: "" }, finish_reason: "length" }], usage: {} }), {
-      status: 200,
-    });
+test("the LLM narrator falls back to offline, and is marked degraded", async () => {
+  const s = stubFetch(['{"narration":"cut']);
   try {
-    const narrator = new OpenRouterNarrator(db, {
-      apiKey: "test", model: "test", language: "English", spendCapUsd: 0.5,
-    });
-    const out = await narrator.narrate(ctx);
-    assert.equal(out.text, "Something happens.");
-    assert.deepEqual(out.options, [{ id: "wait", text: "Wait" }]);
+    const out = await narratorFor(stubDb()).narrate(ctx);
+    assert.equal(out.text, "Something happens."); // the offline narrator echoes the events
+    assert.equal(out.degraded, true);
   } finally {
-    (globalThis as { fetch: unknown }).fetch = original;
+    s.restore();
   }
 });
 
@@ -82,14 +100,10 @@ test("the OpenRouter prompt carries Niko's memories inside the prompt budget", a
   const original = globalThis.fetch;
   (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
     captured = JSON.parse(init.body);
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"narration":"ok"}' } }], usage: {} }), { status: 200 });
   };
   try {
-    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 }, rules);
-    await narrator.narrate({
+    await narratorFor(db, {}, rules).narrate({
       ...ctx, tick: 20, memory: { characterId: "niko", tick: 20, zoneId: "house_001", presentCharacters: [] },
     });
   } finally {
@@ -108,19 +122,14 @@ test("the OpenRouter prompt carries Niko's memories inside the prompt budget", a
 
 test("the memory block is empty when the character has no memories", async () => {
   const db = openDb(":memory:");
-  const rules = loadMemoryRules(DATA);
   let captured: { messages: { content: string }[] } | undefined;
   const original = globalThis.fetch;
   (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
     captured = JSON.parse(init.body);
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"narration":"ok"}' } }], usage: {} }), { status: 200 });
   };
   try {
-    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 }, rules);
-    await narrator.narrate({
+    await narratorFor(db).narrate({
       ...ctx, memory: { characterId: "niko", tick: 0, zoneId: "house_001", presentCharacters: [] },
     });
   } finally {
@@ -134,10 +143,10 @@ test("partialNarration reads the narration field while it streams", () => {
   assert.equal(partialNarration('{"narration":"Niko la'), "Niko la");
   assert.equal(partialNarration('{"narration":"a\\"b\\n'), 'a"b\n');
   assert.equal(partialNarration('{"options":[]'), null);
-  assert.equal(partialNarration('{"narration":"Done","options":[]}'), "Done");
+  assert.equal(partialNarration('{"narration":"Done"}'), "Done");
 });
 
-test("the LLM narrator streams reasoning and narration deltas", async () => {
+test("the LLM narrator streams reasoning and narration deltas and logs its role", async () => {
   const enc = new TextEncoder();
   const sse = (objs: unknown[]) => new Response(new ReadableStream({
     start(c) { for (const o of objs) c.enqueue(enc.encode(`data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`)); c.close(); },
@@ -147,24 +156,22 @@ test("the LLM narrator streams reasoning and narration deltas", async () => {
     { choices: [{ delta: { reasoning: "think " } }] },
     { choices: [{ delta: { content: '{"narration":"Niko ' } }] },
     { choices: [{ delta: { content: 'lands."' } }] },
-    { choices: [{ delta: { content: ',"options":[{"id":"wait","text":"Wait"}]}' } }] },
+    { choices: [{ delta: { content: '}' } }] },
     { usage: { prompt_tokens: 3, completion_tokens: 2, cost: 0.01 } },
     "[DONE]",
   ]);
   try {
     const db = openDb(":memory:");
-    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
     const deltas: Delta[] = [];
-    const out = await narrator.narrate(ctx, (d) => deltas.push(d));
+    const out = await narratorFor(db).narrate(ctx, (d) => deltas.push(d));
     assert.equal(out.text, "Niko lands.");
-    assert.deepEqual(out.options, [{ id: "wait", text: "Wait" }]);
     assert.deepEqual(deltas, [
       { kind: "reasoning", text: "think " },
       { kind: "text", text: "Niko " },
       { kind: "text", text: "lands." },
     ]);
-    const row = db.prepare("SELECT tokens_input, tokens_output, cost FROM llm_calls").get();
-    assert.deepEqual(row, { tokens_input: 3, tokens_output: 2, cost: 0.01 });
+    const row = db.prepare("SELECT role, tokens_input, tokens_output, cost FROM llm_calls").get();
+    assert.deepEqual(row, { role: "narrator", tokens_input: 3, tokens_output: 2, cost: 0.01 });
   } finally {
     (globalThis as { fetch: unknown }).fetch = original;
   }
@@ -175,16 +182,12 @@ test("a saved system prompt override is sent instead of the default", async () =
   const original = globalThis.fetch;
   (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
     captured = JSON.parse(init.body);
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"narration":"ok"}' } }], usage: {} }), { status: 200 });
   };
   try {
     const db = openDb(":memory:");
     setMeta(db, "prompt_system", "CUSTOM SYSTEM");
-    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
-    await narrator.narrate(ctx);
+    await narratorFor(db).narrate(ctx);
     assert.equal(captured!.messages[0].content, "CUSTOM SYSTEM");
   } finally {
     (globalThis as { fetch: unknown }).fetch = original;
@@ -201,30 +204,13 @@ test("narrationRejected flags tile counts and too-similar narrations", () => {
   assert.equal(narrationRejected("Ivy opens the door.", ["Marta speaks quickly."], 0.6), false);
 });
 
-// A stub narrator that answers with queued raw contents and counts the calls.
-function stubNarrator(contents: string[]) {
-  const db = { prepare: () => ({ get: () => ({ t: 0 }), run: () => {} }) } as unknown as Db;
-  let calls = 0;
-  const original = globalThis.fetch;
-  (globalThis as { fetch: unknown }).fetch = async () => {
-    const content = contents[Math.min(calls, contents.length - 1)];
-    calls++;
-    return new Response(JSON.stringify({ choices: [{ message: { content } }], usage: {} }), { status: 200 });
-  };
-  return {
-    narrator: new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 }),
-    calls: () => calls,
-    restore: () => { (globalThis as { fetch: unknown }).fetch = original; },
-  };
-}
-
 test("a rejected narration is retried once and the retry is used", async () => {
-  const s = stubNarrator([
-    '{"narration":"Marta is seven tiles north.","options":[]}',
-    '{"narration":"Marta stands beside Niko.","options":[]}',
+  const s = stubFetch([
+    '{"narration":"Marta is seven tiles north."}',
+    '{"narration":"Marta stands beside Niko."}',
   ]);
   try {
-    const out = await s.narrator.narrate(ctx);
+    const out = await narratorFor(stubDb()).narrate(ctx);
     assert.equal(out.text, "Marta stands beside Niko.");
     assert.equal(s.calls(), 2);
   } finally {
@@ -232,11 +218,12 @@ test("a rejected narration is retried once and the retry is used", async () => {
   }
 });
 
-test("a second rejection accepts the offline narration", async () => {
-  const s = stubNarrator(['{"narration":"Marta is seven tiles north.","options":[]}']);
+test("a second rejection accepts the offline narration as degraded", async () => {
+  const s = stubFetch(['{"narration":"Marta is seven tiles north."}']);
   try {
-    const out = await s.narrator.narrate(ctx);
+    const out = await narratorFor(stubDb()).narrate(ctx);
     assert.equal(out.text, "Something happens."); // the offline narrator echoes the events
+    assert.equal(out.degraded, true);
     assert.equal(s.calls(), 2);
   } finally {
     s.restore();
@@ -248,15 +235,10 @@ test("the prompt carries room, last move, past narrations and only the known fac
   const original = globalThis.fetch;
   (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
     captured = JSON.parse(init.body);
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"narration":"ok"}' } }], usage: {} }), { status: 200 });
   };
   try {
-    const db = openDb(":memory:");
-    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
-    await narrator.narrate({
+    await narratorFor(openDb(":memory:")).narrate({
       ...ctx, tick: 5,
       place: { name: "House", description: "", room: "Bedroom" },
       lastMove: "north",
@@ -279,19 +261,45 @@ test("the prompt carries room, last move, past narrations and only the known fac
   assert.ok(!JSON.stringify(payload).includes("a secret Niko does not know"));
 });
 
-test("the offline narrator plays a conversation with reply options", async () => {
-  const db = openDb(":memory:");
-  const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0 });
+test("the continuity check keeps a narration it accepts", async () => {
+  const s = stubFetch(['{"narration":"Niko waits by the door."}', '{"ok":true,"problems":[]}']);
+  try {
+    const deltas: Delta[] = [];
+    const out = await narratorFor(openDb(":memory:")).narrate(
+      { ...ctx, effects: { resolved: ["wait"], rejected: [] } },
+      (d) => deltas.push(d),
+    );
+    assert.equal(out.text, "Niko waits by the door.");
+    assert.equal(s.calls(), 2); // one narration, one continuity check
+    assert.ok(deltas.some((d) => d.kind === "stage" && d.text === "checking"));
+  } finally {
+    s.restore();
+  }
+});
+
+test("the continuity check rewrites a flagged narration once and accepts the rewrite", async () => {
+  const s = stubFetch([
+    '{"narration":"Niko teleports to the roof."}',
+    '{"ok":false,"problems":["Niko cannot fly."]}',
+    '{"narration":"Niko stands still; the roof is out of reach."}',
+  ]);
+  try {
+    const out = await narratorFor(openDb(":memory:")).narrate({ ...ctx, effects: { resolved: ["wait"], rejected: [] } });
+    assert.equal(out.text, "Niko stands still; the roof is out of reach.");
+    assert.equal(s.calls(), 3);
+  } finally {
+    s.restore();
+  }
+});
+
+test("the offline narrator plays a conversation with no options", async () => {
+  const narrator = new OpenRouterNarrator(new LlmClient(stubDb(), cfg({ spendCapUsd: 0 })));
   const out = await narrator.narrate({
     ...ctx, conversation: { npc: "Marta", beat: 0, maxBeats: 4, want: "Marta has a warning." },
-    actions: [
-      { id: "reply:marta:ask", label: "Ask Marta a question" },
-      { id: "reply:marta:press", label: "Press Marta for details" },
-      { id: "leave:marta", label: "Leave the conversation" },
-    ],
   });
   assert.match(out.text, /Marta/);
-  assert.equal(out.options.length, 3);
+  assert.ok(!("options" in out));
+  assert.equal(out.degraded, true); // the spend cap sent it offline
 });
 
 test("the offline narrator has a line for every fall beat and both impacts", async () => {
@@ -315,15 +323,10 @@ test("the LLM payload carries the world facts and the arrival block", async () =
   const original = globalThis.fetch;
   (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
     captured = JSON.parse(init.body);
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"narration":"ok"}' } }], usage: {} }), { status: 200 });
   };
   try {
-    const db = openDb(":memory:");
-    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
-    await narrator.narrate({
+    await narratorFor(openDb(":memory:")).narrate({
       ...ctx,
       world: { year: 2030, country: "United States", facts: ["Hybrids are common."], style: "short" },
       arrival: { phase: "fall", altitude: "through the clouds", beat: 1, beats: 3 },

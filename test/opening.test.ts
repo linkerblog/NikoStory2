@@ -4,16 +4,16 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createGame } from "../src/game.js";
+import { createGame, offlineServices } from "../src/game.js";
 import { canSee, fallIntent, type Action, type Engine } from "../src/engine.js";
 import type { Db } from "../src/db.js";
-import { OfflineNarrator, hasTileCount } from "../src/narrator.js";
+import { hasTileCount } from "../src/narrator.js";
 import { loadOpening, loadZone } from "../src/world.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 
 const create = (path = ":memory:", seed = 1337) =>
-  createGame(path, DATA, seed, () => new OfflineNarrator());
+  createGame(path, DATA, seed, () => offlineServices());
 
 const fall = (text: string): Action => ({ type: "fall", text });
 const STEER = "spread my arms and steer toward the houses";
@@ -27,13 +27,13 @@ const playFall = async (engine: Engine, texts: string[]) => {
   for (const text of texts) assert.equal((await engine.takeTurn(fall(text))).ok, true);
 };
 
-test("a new game opens in the fall, tick 0, with free text and no fixed options", async () => {
+test("a new game opens in the fall, tick 0, with free text and no preset options", async () => {
   const { engine } = create();
   await engine.start();
   const s = engine.state();
   assert.equal(s.phase, "fall");
   assert.equal(s.tick, 0);
-  assert.equal(s.options.length, 0); // free text: the engine offers no options
+  assert.ok(!("options" in s)); // free text: the engine never sends an option list
   assert.equal(s.fall?.beats, 3);
   assert.equal(hasTileCount(s.log[0].text), false); // "high above the clouds", no numbers
 });
@@ -149,7 +149,7 @@ test("a hard landing zeroes the Ether that the landing step then regenerates", a
 
 test("a save without a phase (v0.2.0) behaves as play", async () => {
   const path = join(mkdtempSync(join(tmpdir(), "niko-open-")), "game.db");
-  const raw = () => createGame(path, DATA, 1337, () => new OfflineNarrator());
+  const raw = () => createGame(path, DATA, 1337, () => offlineServices());
   const g1 = raw();
   await g1.engine.start();
   await playFall(g1.engine, [STEER, BRACE, STEER]);
@@ -168,12 +168,12 @@ test("a malformed opening.json is rejected on load", () => {
   const dir = mkdtempSync(join(tmpdir(), "niko-open-data-"));
   const zone = loadZone(DATA);
   const write = (o: unknown) => writeFileSync(join(dir, "opening.json"), JSON.stringify(o));
-  const base = { beats: [{ altitude: "x" }], abilities: { brace: { ether_cost: 2 } }, landing: { steer_room: "living_room" } };
+  const base = { beats: [{ altitude: "x" }], brace_ability: "brace", landing: { steer_room: "living_room" } };
 
   write({ ...base, beats: [] });
   assert.throws(() => loadOpening(dir, zone), /at least one beat/);
-  write({ ...base, abilities: { brace: { ether_cost: -1 } } });
-  assert.throws(() => loadOpening(dir, zone), /non-negative/);
+  write({ ...base, brace_ability: "" });
+  assert.throws(() => loadOpening(dir, zone), /brace ability id/);
   write({ ...base, landing: { steer_room: "nowhere" } });
   assert.throws(() => loadOpening(dir, zone), /not in zone/);
 

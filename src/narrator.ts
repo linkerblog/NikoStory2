@@ -1,10 +1,10 @@
 import { getMeta, type Db } from "./db.js";
-import { recall, DEFAULT_MEMORY_RULES, type MemoryQuery, type MemoryRules } from "./memory.js";
+import { recalledLines, DEFAULT_MEMORY_RULES, type MemoryQuery, type MemoryRules } from "./memory.js";
+import { extractJson, type LlmClient } from "./llm.js";
 import { DEFAULT_STAKES_RULES, type StakesRules } from "./stakes.js";
 import type { WorldFacts } from "./world.js";
 
-export interface Option { id: string; text: string }
-export interface Narration { text: string; options: Option[] }
+export interface Narration { text: string; degraded?: boolean }
 export interface VisibleActor { name: string; proximity: string; direction: string; personality: string }
 export interface ConversationContext { npc: string; beat: number; maxBeats: number; want: string }
 // The opening: `impact` is only set on the landing beat; `beat`/`beats` drive the fall beats and
@@ -18,13 +18,16 @@ export interface ArrivalContext {
   choices?: string[];
   text?: string;
 }
+// The effects a free-text turn resolved or rejected, handed to the narrator and the continuity check.
+export interface TurnEffects { resolved: string[]; rejected: { effect: string; reason: string }[] }
 export interface Context {
   tick: number;
   sheet: Record<string, unknown>;
   place: { name: string; description: string; room?: string };
   visible: VisibleActor[];
   events: string[];
-  actions: { id: string; label: string }[];
+  effects?: TurnEffects;
+  summary?: string | null;
   lastMove?: string | null;
   recentNarrations?: string[];
   scene?: { question: string; knownFacts: string[] };
@@ -56,9 +59,10 @@ export interface Narrator {
 }
 
 // Live output while the model is still writing. "text" is the narration as it grows, "reasoning" is
-// whatever thinking tokens the provider streams (shown dim, never enabled here), and "reset" asks the
-// client to drop the current draft before a retry or a fallback.
-export type DeltaKind = "text" | "reasoning" | "reset";
+// whatever thinking tokens the provider streams (shown dim), "reset" asks the client to drop the
+// current draft before a retry, and "stage" reports the phase of the turn (interpreting, resolving,
+// narrating, checking).
+export type DeltaKind = "text" | "reasoning" | "reset" | "stage";
 export interface Delta { kind: DeltaKind; text: string }
 export type DeltaSink = (d: Delta) => void;
 
@@ -93,24 +97,17 @@ export class OfflineNarrator implements Narrator {
           : beat === 2
             ? `${npc} adds one more detail and watches Niko.`
             : `${npc} finishes and waits for an answer.`;
-      return { text, options: c.actions.slice(0, 3).map((a) => ({ id: a.id, text: a.label })) };
+      return { text };
     }
     if (c.arrival) {
-      if (c.arrival.impact) {
-        return { text: LANDING_LINES[c.arrival.impact], options: c.actions.slice(0, 3).map((a) => ({ id: a.id, text: a.label })) };
-      }
+      if (c.arrival.impact) return { text: LANDING_LINES[c.arrival.impact] };
       const base = FALL_LINES[c.arrival.altitude] ?? `Niko falls, ${c.arrival.altitude}.`;
       const text = c.arrival.text?.trim();
-      return { text: text ? `${base} Niko acts: "${text}".` : base, options: c.actions.slice(0, 3).map((a) => ({ id: a.id, text: a.label })) };
+      return { text: text ? `${base} Niko acts: "${text}".` : base };
     }
-    return {
-      text: c.events.join(" "),
-      options: c.actions.slice(0, 3).map((a) => ({ id: a.id, text: a.label })),
-    };
+    return { text: c.events.join(" ") };
   }
 }
-
-export interface LlmConfig { apiKey: string; model: string; language: string; spendCapUsd: number; reasoning?: boolean }
 
 export const systemPrompt = (language: string) =>
   `You are the narrator of a turn-based role-playing game. Write in ${language}.
@@ -119,14 +116,21 @@ Rules:
 - Never state a distance as a number: no tiles, no metres. Use the proximity words in the situation.
 - Do not restate what the previous narrations already said.
 - End on pressure, a question or a visible choice.
-- Give up to 3 options that differ in intent. During the fall's free-form beats, echo what Niko does and give no options.
 - Do not decide for Niko: tell what happens and what he perceives. Do not invent characters or objects that are not in the situation.
 - The world facts in the situation are true; do not contradict them and do not invent new ones.
-Respond ONLY with JSON: {"narration": string, "options": [{"id": string, "text": string}]}. Each "id" must be exactly one of available_actions. If available_actions is empty, return an empty options list.`;
+Respond ONLY with JSON: {"narration": string}.`;
 
 export const RETRY_HINT =
   "Your previous narration was rejected: it repeated an earlier narration or used a number for distance. " +
   "Rewrite it in at most two short sentences, do not repeat the previous narrations, and do not use tiles or metres.";
+
+export const continuityPrompt = (language: string) =>
+  `You check the continuity of a narration against the facts. Write in ${language}.
+Flag only real problems:
+- it contradicts a world fact, a known fact or the place;
+- it invents characters, objects or events that are not in the situation;
+- it describes something the resolved and rejected effects say did not happen.
+Respond ONLY with JSON: {"ok": boolean, "problems": [string]}. If it is fine, "ok" is true and "problems" is empty.`;
 
 // The architect prompt: a strict, small 2D floor plan the engine will validate before using it.
 export const architectPrompt = (req: ZoneRequest) =>
@@ -169,23 +173,30 @@ export function narrationRejected(text: string, recent: string[], threshold: num
 // A model may wrap its JSON in prose or code fences, and may truncate at max_tokens.
 // Check explicitly so the caller learns why, instead of getting an empty-string JSON error.
 export function parseNarration(content: string, finishReason?: string): Narration {
-  const match = content.match(/\{[\s\S]*\}/);
-  if (!match) {
-    throw new Error(
-      finishReason === "length"
-        ? `Narrator response was truncated at max_tokens (${content.length} chars)`
-        : `Narrator response has no JSON object (${content.length} chars)`,
-    );
-  }
-  let json: any;
-  try {
-    json = JSON.parse(match[0]);
-  } catch {
+  const json = extractJson(content);
+  if (!json) {
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) {
+      throw new Error(
+        finishReason === "length"
+          ? `Narrator response was truncated at max_tokens (${content.length} chars)`
+          : `Narrator response has no JSON object (${content.length} chars)`,
+      );
+    }
     throw new Error(`Narrator response is not valid JSON (${match[0].length} chars)`);
   }
-  if (typeof json?.narration !== "string" || !Array.isArray(json.options)) throw new Error("Invalid format");
-  const options = json.options.filter((o: any) => typeof o?.id === "string" && typeof o?.text === "string");
-  return { text: json.narration, options };
+  if (typeof json.narration !== "string") throw new Error("Invalid format");
+  return { text: json.narration };
+}
+
+export function parseContinuity(content: string): { ok: boolean; problems: string[] } {
+  const json = extractJson(content);
+  if (!json) throw new Error("Continuity response has no JSON object");
+  const problems: string[] = Array.isArray(json.problems)
+    ? json.problems.filter((p: unknown): p is string => typeof p === "string" && !!p.trim())
+    : [];
+  const ok = json.ok === true || (json.ok === undefined && problems.length === 0);
+  return { ok, problems };
 }
 
 // Best-effort read of the `narration` field while its JSON is still streaming: returns the decoded
@@ -219,11 +230,9 @@ export function partialNarration(buf: string): string | null {
 // A model may wrap its JSON in prose or code fences; the engine validates the shape and ignores
 // everything else. Returns null when there is no usable map so the engine falls back.
 export function parseZoneDraft(content: string): ZoneDraft | null {
-  const match = content.match(/\{[\s\S]*\}/);
-  if (!match) return null;
-  let json: any;
-  try { json = JSON.parse(match[0]); } catch { return null; }
-  if (!Array.isArray(json?.map) || json.map.some((r: unknown) => typeof r !== "string")) return null;
+  const json = extractJson(content);
+  if (!json) return null;
+  if (!Array.isArray(json.map) || json.map.some((r: unknown) => typeof r !== "string")) return null;
   return {
     name: typeof json.name === "string" ? json.name : undefined,
     description: typeof json.description === "string" ? json.description : undefined,
@@ -236,43 +245,12 @@ export function parseZoneDraft(content: string): ZoneDraft | null {
 export class OpenRouterNarrator implements Narrator {
   private fallback = new OfflineNarrator();
   constructor(
-    private db: Db,
-    private cfg: LlmConfig,
+    private llm: LlmClient,
     private rules: MemoryRules = DEFAULT_MEMORY_RULES,
     private stakes: StakesRules = DEFAULT_STAKES_RULES,
   ) {}
 
-  private spent(): number {
-    return (this.db.prepare("SELECT COALESCE(SUM(cost), 0) AS t FROM llm_calls").get() as { t: number }).t;
-  }
-
-  // Highest-ranked memories survive the budget: lowest-ranked are dropped first, then the rest are
-  // printed oldest-first so the model reads them chronologically.
-  private memories(q: MemoryQuery): string[] {
-    const { promptMaxItems, promptMaxChars } = this.rules.recall;
-    const line = (m: { tick: number; text: string }) => `t${m.tick}: ${m.text}`;
-    const selected = recall(this.db, q.characterId, q, promptMaxItems, this.rules);
-    while (
-      selected.length > 0 &&
-      (selected.length > promptMaxItems || selected.reduce((n, m) => n + line(m).length, 0) > promptMaxChars)
-    ) {
-      selected.pop();
-    }
-    return selected.sort((a, b) => a.tick - b.tick || a.id - b.id).map(line);
-  }
-
-  private post(body: object): Promise<Response> {
-    return fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.cfg.apiKey}`,
-        "Content-Type": "application/json",
-        "X-Title": "NikoStory2",
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
-  }
+  private get db(): Db { return this.llm.db; }
 
   private payload(c: Context) {
     return {
@@ -285,108 +263,73 @@ export class OpenRouterNarrator implements Narrator {
       scene: c.scene ?? null,
       conversation: c.conversation ?? null,
       previous_narrations: c.recentNarrations ?? [],
-      niko_memories: c.memory ? this.memories(c.memory) : [],
+      story_so_far: c.summary ?? null,
+      effects_this_turn: c.effects ?? null,
+      niko_memories: c.memory ? recalledLines(this.db, c.memory, this.rules) : [],
       events_this_turn: c.events,
-      available_actions: c.actions,
     };
   }
 
-  // One model call, logged before validation (an invalid response also costs). When the provider
-  // honours `stream`, narration text is forwarded token by token and reasoning tokens are forwarded
-  // as they arrive; when it ignores `stream`, the single JSON body is read and its narration emitted
-  // in one delta so the client sees the same shape.
-  private async streamAttempt(messages: { role: string; content: string }[], c: Context, onDelta?: DeltaSink): Promise<Narration> {
-    const core = {
-      model: this.cfg.model, messages, max_tokens: 32000, temperature: 0.8,
-      stream: true, stream_options: { include_usage: true },
-    };
-    const rich = {
-      ...core,
-      response_format: { type: "json_object" },
-      // Off by default: reasoning triples latency and cost. When on, its tokens are streamed too.
-      ...(this.cfg.reasoning ? { reasoning: { enabled: true } } : {}),
-    };
-    // The plain retry drops response_format and reasoning so an unsupported parameter cannot hard-fail.
-    let r = await this.post(rich);
-    if (r.status === 400) r = await this.post(core);
-    if (!r.ok) throw new Error(`OpenRouter responded ${r.status}`);
-    const type = r.headers.get("content-type") ?? "";
-    if (!r.body || !type.includes("text/event-stream")) {
-      const data: any = await r.json();
-      const choice = data.choices?.[0];
-      const content: string = choice?.message?.content ?? "";
-      this.logUsage(c.tick, data.usage, JSON.stringify(messages), content);
-      const text = partialNarration(content);
-      if (text) onDelta?.({ kind: "text", text });
-      return parseNarration(content, choice?.finish_reason);
-    }
-
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let raw = "", content = "", shown = "", usage: any = null, finish: string | undefined;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      raw += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = raw.indexOf("\n")) >= 0) {
-        const line = raw.slice(0, nl).replace(/\r$/, "").trim();
-        raw = raw.slice(nl + 1);
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") continue;
-        let json: any;
-        try { json = JSON.parse(payload); } catch { continue; }
-        if (json.usage) usage = json.usage;
-        const choice = json.choices?.[0];
-        if (!choice) continue;
-        if (choice.finish_reason) finish = choice.finish_reason;
-        const d = choice.delta ?? {};
-        const think = typeof d.reasoning === "string"
-          ? d.reasoning
-          : Array.isArray(d.reasoning_details)
-            ? d.reasoning_details.map((x: any) => x?.text ?? "").join("")
-            : "";
-        if (think) onDelta?.({ kind: "reasoning", text: think });
-        if (typeof d.content === "string" && d.content) {
-          content += d.content;
-          const now = partialNarration(content);
-          if (now !== null && now.length > shown.length && now.startsWith(shown)) {
-            onDelta?.({ kind: "text", text: now.slice(shown.length) });
-            shown = now;
-          }
+  // One streaming narrator call. Narration text is forwarded as it decodes; reasoning tokens are
+  // forwarded as they arrive. The call is logged before validation, so an invalid response still costs.
+  private async attempt(messages: { role: string; content: string }[], c: Context, onDelta?: DeltaSink): Promise<Narration> {
+    let content = "", shown = "";
+    const res = await this.llm.chat("narrator", messages, {
+      json: true, tick: c.tick, maxTokens: 32000, temperature: 0.8,
+      onReasoning: (t) => onDelta?.({ kind: "reasoning", text: t }),
+      onContent: (d) => {
+        content += d;
+        const now = partialNarration(content);
+        if (now !== null && now.length > shown.length && now.startsWith(shown)) {
+          onDelta?.({ kind: "text", text: now.slice(shown.length) });
+          shown = now;
         }
-      }
-    }
-    this.logUsage(c.tick, usage, JSON.stringify(messages), content);
-    return parseNarration(content, finish);
+      },
+    });
+    return parseNarration(res.content, res.finishReason);
   }
 
-  private logUsage(tick: number, usage: any, request: string, response: string): void {
-    this.db.prepare(
-      `INSERT INTO llm_calls (tick, role, model, tokens_input, tokens_output, cost, request, response)
-       VALUES (?, 'narrator', ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      tick, this.cfg.model, usage?.prompt_tokens ?? null, usage?.completion_tokens ?? null,
-      usage?.cost ?? null, request, response,
-    );
+  private async degraded(c: Context, onDelta?: DeltaSink): Promise<Narration> {
+    const n = await this.fallback.narrate(c, onDelta);
+    return { text: n.text, degraded: true };
+  }
+
+  // The continuity pass runs once after the deterministic checks: when it flags a real problem, the
+  // narrator rewrites once and the rewrite is accepted either way. At most two extra calls per turn.
+  private async continuity(c: Context, text: string): Promise<{ ok: boolean; problems: string[] } | null> {
+    if (this.llm.overBudget()) return null;
+    const messages = [
+      { role: "system", content: continuityPrompt(this.llm.language) },
+      { role: "user", content: JSON.stringify({
+        narration: text,
+        world: c.world ?? null,
+        place: c.place,
+        known_facts: c.scene?.knownFacts ?? [],
+        recent_narrations: c.recentNarrations ?? [],
+        resolved_effects: c.effects?.resolved ?? [],
+        rejected_effects: c.effects?.rejected ?? [],
+      }) },
+    ];
+    try {
+      const res = await this.llm.chat("continuity", messages, { json: true, maxTokens: 2000, temperature: 0, tick: c.tick });
+      return parseContinuity(res.content);
+    } catch (e) {
+      console.warn("The continuity check failed:", (e as Error).message);
+      return null;
+    }
   }
 
   // The architect call: one non-streaming request that designs a building. Any failure returns null
   // and the engine uses its deterministic generator, so a bad or expensive model cannot break play.
   async generateZone(req: ZoneRequest): Promise<ZoneDraft | null> {
-    if (this.spent() >= this.cfg.spendCapUsd) return null;
+    if (this.llm.overBudget()) return null;
     const messages = [
       { role: "system", content: architectPrompt(req) },
       { role: "user", content: JSON.stringify({ building: req.name, size: { width: req.width, height: req.height }, entry: req.entry, world: req.world ?? null }) },
     ];
     try {
-      const r = await this.post({ model: this.cfg.model, messages, max_tokens: 8000, temperature: 0.7, response_format: { type: "json_object" } });
-      if (!r.ok) return null;
-      const data: any = await r.json();
-      const content: string = data.choices?.[0]?.message?.content ?? "";
-      this.logUsage(req.tick, data.usage, JSON.stringify(messages), content);
-      return parseZoneDraft(content);
+      const res = await this.llm.chat("architect", messages, { json: true, maxTokens: 8000, temperature: 0.7, stream: false, tick: req.tick });
+      return parseZoneDraft(res.content);
     } catch (e) {
       console.warn("The architect call failed, using the deterministic building:", (e as Error).message);
       return null;
@@ -394,34 +337,48 @@ export class OpenRouterNarrator implements Narrator {
   }
 
   async narrate(c: Context, onDelta?: DeltaSink): Promise<Narration> {
-    if (this.spent() >= this.cfg.spendCapUsd) {
+    if (this.llm.overBudget()) {
       console.warn("Spend cap reached: narrator in offline mode.");
-      return this.fallback.narrate(c, onDelta);
+      return this.degraded(c, onDelta);
     }
     const recent = c.recentNarrations ?? [];
     const rejected = (n: Narration) => narrationRejected(n.text, recent, this.stakes.overlapThreshold);
     // Prompts can be overridden from the debug tab (settings table); empty means "use the default".
-    const system = getMeta(this.db, "prompt_system") || systemPrompt(this.cfg.language);
+    const system = getMeta(this.db, "prompt_system") || systemPrompt(this.llm.language);
     const retry = getMeta(this.db, "prompt_retry") || RETRY_HINT;
     const messages = [
       { role: "system", content: system },
       { role: "user", content: JSON.stringify(this.payload(c)) },
     ];
     try {
-      const first = await this.streamAttempt(messages, c, onDelta);
-      if (!rejected(first)) return first;
-      // One retry with a stronger hint; a second failure accepts the offline narration. The retry
-      // also respects the spend cap so it cannot outrun the budget. The client drops the first draft.
-      onDelta?.({ kind: "reset", text: "" });
-      if (this.spent() >= this.cfg.spendCapUsd) return this.fallback.narrate(c, onDelta);
-      const second = await this.streamAttempt([...messages, { role: "system", content: retry }], c, onDelta);
-      if (!rejected(second)) return second;
-      onDelta?.({ kind: "reset", text: "" });
-      return this.fallback.narrate(c, onDelta);
+      let first = await this.attempt(messages, c, onDelta);
+      if (rejected(first)) {
+        // One retry with a stronger hint; a second failure accepts the offline narration. The retry
+        // also respects the spend cap so it cannot outrun the budget. The client drops the first draft.
+        onDelta?.({ kind: "reset", text: "" });
+        if (this.llm.overBudget()) return this.degraded(c, onDelta);
+        first = await this.attempt([...messages, { role: "system", content: retry }], c, onDelta);
+        if (rejected(first)) {
+          onDelta?.({ kind: "reset", text: "" });
+          return this.degraded(c, onDelta);
+        }
+      }
+      // The continuity check only runs for free-text turns (they carry effects), and never on the
+      // offline fallback. A flagged narration is rewritten once and accepted either way.
+      if (c.effects && !this.llm.overBudget()) {
+        onDelta?.({ kind: "stage", text: "checking" });
+        const check = await this.continuity(c, first.text);
+        if (check && !check.ok && check.problems.length) {
+          onDelta?.({ kind: "reset", text: "" });
+          const fix = `CONTINUITY FIX: ${check.problems.join(" ")} Rewrite the narration in at most two short sentences and fix these problems.`;
+          return this.attempt([...messages, { role: "system", content: fix }], c, onDelta);
+        }
+      }
+      return first;
     } catch (e) {
       console.warn("The LLM narrator failed, using the offline one:", (e as Error).message);
       onDelta?.({ kind: "reset", text: "" });
-      return this.fallback.narrate(c, onDelta);
+      return this.degraded(c, onDelta);
     }
   }
 }

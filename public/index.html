@@ -82,6 +82,7 @@
   .log-line { margin: 0 0 var(--s3); }
   .log-line .ts { color: var(--fg-dim); font-size: 12px; }
   .log-line .tx { color: var(--fg); }
+  .log-line .degraded { color: var(--warn); font-size: 12px; }
   #log .log-line:last-child .tx { color: var(--accent); }
 
   /* Map */
@@ -105,23 +106,8 @@
   .near { color: var(--fg); }
   .dim { color: var(--fg-dim); }
 
-  /* Options */
+  /* Free-text action, the only input, available in every phase */
   #options { display: flex; flex-wrap: wrap; gap: var(--s2); }
-  .option {
-    display: flex; align-items: center; gap: var(--s2);
-    background: var(--bg-raised); color: var(--fg); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: var(--s2) var(--s3); cursor: pointer; text-align: left;
-    transition: background 120ms ease-out, border-color 120ms ease-out;
-  }
-  .option:hover, .option.selected { background: #1d2331; border-color: var(--accent); }
-  .option:focus-visible { outline: none; border-color: var(--focus); }
-  .option .num { color: var(--accent); font-weight: 600; }
-  .option .mark { color: var(--accent); }
-  .option .lbl { color: var(--fg); }
-  .option:disabled { opacity: 0.5; cursor: progress; border-color: var(--border); background: var(--bg-panel); }
-  .option:disabled .num, .option:disabled .mark { color: var(--fg-dim); }
-
-  /* Free-text action, available in every phase */
   .fall-prompt { flex-basis: 100%; color: var(--fg); font-weight: 600; margin-bottom: var(--s2); }
   .fall-row { flex-basis: 100%; display: flex; gap: var(--s2); }
   .fall-row input {
@@ -299,6 +285,7 @@
   <form class="cmdline" id="cmdline" autocomplete="off">
     <span class="prompt">niko@world:~$</span>
     <input id="cmd" type="text" aria-label="Command line" spellcheck="false" autocomplete="off">
+    <span class="hint" id="stage"></span>
     <span class="hint">F1 help</span>
   </form>
   <div class="error" id="err" role="alert"></div>
@@ -308,11 +295,9 @@
   <div class="modal">
     <h2>[ HELP ]</h2>
     <dl>
-      <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Choose the matching action</dd>
       <dt><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd> / <kbd>WASD</kbd></dt><dd>Move Niko one tile</dd>
       <dt><kbd>Space</kbd></dt><dd>Wait one turn</dd>
-      <dt><kbd>Enter</kbd></dt><dd>Confirm the selected action</dd>
-      <dt>free text</dt><dd>Type anything in the Actions box or the command line: go north, talk to Marta, wait, examine the crate</dd>
+      <dt>free text</dt><dd>Type anything in the Actions box or the command line: go north, talk to Marta, wait, examine the crate. The interpreter reads it and the engine decides.</dd>
       <dt><kbd>/</kbd></dt><dd>Focus the command line</dd>
       <dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> in the command line</dt><dd>Browse command history</dd>
       <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Cycle focus between panels</dd>
@@ -353,7 +338,8 @@ const T = {
   accent: cssVar("--accent"), accent2: cssVar("--accent-2"), warn: cssVar("--warn"),
 };
 
-let S = null, D = null, busy = false, selected = 0, gPending = false, debugTab = "overview";
+let S = null, D = null, busy = false, gPending = false, debugTab = "overview";
+let lastFree = ""; // kept so a rejected turn leaves the player's text in the box
 let revealTimer = null, revealedText = null, toastTimer = null;
 const hist = [];
 let histIdx = 0;
@@ -403,7 +389,7 @@ async function send(url, body, after) {
       }
     }
   } catch { setError("Network error: the request did not reach the engine."); }
-  finally { busy = false; setBusy(false); endStream(); if (document.body.dataset.view === "debug" && debugTab !== "prompts") loadDebug(); }
+  finally { busy = false; setBusy(false); endStream(); setStage(""); if (document.body.dataset.view === "debug" && debugTab !== "prompts") loadDebug(); }
 }
 
 function handleEvent(block, after) {
@@ -418,8 +404,12 @@ function handleEvent(block, after) {
   if (ev === "done") {
     // A streamed narration is already on screen: skip the typewriter so it does not replay.
     if (payload.state) { S = payload.state; revealedText = streamText || null; render(); }
-    if (!payload.ok) setError(payload.error || "Cannot do that.");
-    else if (after) after();
+    if (!payload.ok) {
+      setError(payload.error || "Cannot do that.");
+      // A rejected turn changes nothing and leaves the words in the box.
+      const inp = $("free-input");
+      if (inp && !inp.value && lastFree) inp.value = lastFree;
+    } else if (after) after();
     return;
   }
   if (ev === "error") setError(payload.error || "Internal error.");
@@ -445,11 +435,12 @@ function beginStream() { streamText = ""; removeDrafts(); }
 function endStream() { removeDrafts(); streamText = ""; }
 function applyDelta(d) {
   if (d.kind === "reset") { streamText = ""; removeDrafts(); return; }
+  if (d.kind === "stage") { setStage(d.text); return; }
   if (d.kind === "reasoning") { draft("thinking", "?").textContent += d.text; return; }
   if (d.kind === "text") { streamText += d.text; draft("streaming", "~").textContent = streamText; }
 }
+function setStage(stage) { $("stage").textContent = stage ? `\u00b7 ${stage}\u2026` : ""; }
 function setBusy(on) {
-  document.querySelectorAll("#options .option").forEach((b) => { b.disabled = on; });
   const rb = $("reset-btn"); if (rb) rb.disabled = on;
   const fb = $("free-go"); if (fb) fb.disabled = on;
   const fi = $("free-input"); if (fi) fi.disabled = on;
@@ -518,7 +509,7 @@ function render() {
   else { drawMap(); $("map-hint").textContent = S.room || S.zone.name; }
   renderLog();
   renderStatus();
-  renderOptions();
+  renderActions();
 }
 
 function clearReveal() { clearInterval(revealTimer); revealTimer = null; }
@@ -531,7 +522,8 @@ function renderLog() {
   el.innerHTML = entries.map((r, i) => {
     const isLast = i === entries.length - 1;
     const text = (animate && isLast) ? "" : esc(r.text);
-    return `<p class="log-line"><span class="ts">T${pad(r.tick)}</span> <span class="tx">${text}</span></p>`;
+    const tag = r.degraded ? '<span class="degraded">[degraded]</span> ' : '';
+    return `<p class="log-line"><span class="ts">T${pad(r.tick)}</span> ${tag}<span class="tx">${text}</span></p>`;
   }).join("");
   el.scrollTop = el.scrollHeight;
   revealedText = lastText;
@@ -569,8 +561,8 @@ function renderStatus() {
     : `<div class="near dim">\u00b7 no one in sight</div>`;
 }
 
-function renderOptions() {
-  selected = 0;
+// Free text is the only input: the interpreter reads it and the engine decides what happens.
+function renderActions() {
   const el = $("options");
   el.innerHTML = "";
   const fall = S.phase === "fall";
@@ -579,25 +571,12 @@ function renderOptions() {
     p.className = "fall-prompt";
     p.textContent = "What does Niko do?";
     el.appendChild(p);
-  } else {
-    (S.options || []).forEach((o, i) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "option" + (i === selected ? " selected" : "");
-      b.disabled = busy;
-      b.innerHTML = `<span class="num">${i + 1}</span><span class="mark">\u25b8</span><span class="lbl">${esc(o.text)}</span>`;
-      b.onclick = () => { selected = i; markSelected(); act(o.action); };
-      b.onmouseenter = () => { selected = i; markSelected(); };
-      el.appendChild(b);
-    });
-    if (!el.children.length) el.innerHTML = `<div class="dim">No actions available.</div>`;
   }
-  // Free text is always available: the engine maps it to an action or answers it as narration.
   const row = document.createElement("div");
   row.className = "fall-row";
   row.innerHTML = `<input id="free-input" type="text" maxlength="500" spellcheck="false"
       placeholder="${fall ? "e.g. spread my arms and steer toward the rooftops"
-                        : "Or type what Niko does: go north, talk to Marta, wait\u2026"}">
+                        : "Type what Niko does: go north, open the fridge, talk to Marta\u2026"}">
     <button class="btn" id="free-go" type="button">Do it</button>`;
   el.appendChild(row);
   const inp = $("free-input");
@@ -610,16 +589,11 @@ function renderOptions() {
   // Only steal focus while falling; in play the arrows still move Niko.
   if (fall && document.activeElement !== inp && document.activeElement.id !== "cmd") inp.focus();
 }
-function markSelected() {
-  [...$("options").children].forEach((b, i) => b.classList.toggle("selected", i === selected));
-}
-function confirmSelected() {
-  if (S && S.options && S.options[selected]) act(S.options[selected].action);
-}
 function submitFree() {
   const inp = $("free-input");
   const text = (inp && inp.value || "").trim();
   if (!text) { setError("Say what Niko does."); return; }
+  lastFree = text;
   if (inp) inp.value = "";
   act(S.phase === "fall" ? { type: "fall", text } : { type: "free", text });
 }
@@ -634,9 +608,8 @@ function runCommand(raw) {
   if (h === "reset" || h === "restart") return openConfirm();
   // While falling, the command line is free text for the opening.
   if (S.phase === "fall") return act({ type: "fall", text: cmd });
-  // Choosing one of the narrated options still works by number; anything else is free text and the
-  // engine maps it to an action (north, wait, talk to Marta...) or answers it as narration.
-  if (/^[1-3]$/.test(h) && S.options[+h - 1]) return act(S.options[+h - 1].action);
+  // Anything else is free text: the interpreter reads it and the engine decides.
+  lastFree = cmd;
   return act({ type: "free", text: cmd });
 }
 
@@ -719,7 +692,15 @@ function renderOverview() {
     `#${m.id} T${m.tick} ${m.character_id} [imp ${m.importance}] ev${m.event_id} ${esc(m.text)}`).join("\n") + "</pre>");
   out.push("<h3>[ LLM CALLS ] (newest 10)</h3>");
   out.push("<pre>" + ((D.llm_calls || []).length
-    ? D.llm_calls.map((c) => `#${c.id} T${c.tick} ${esc(c.model)} in=${c.tokens_input ?? "-"} out=${c.tokens_output ?? "-"} cost=${c.cost ?? "-"}`).join("\n")
+    ? D.llm_calls.map((c) => `#${c.id} T${c.tick} [${esc(c.role ?? "?")}] ${esc(c.model)} in=${c.tokens_input ?? "-"} out=${c.tokens_output ?? "-"} cost=${c.cost ?? "-"}`).join("\n")
+    : "(none)") + "</pre>");
+  out.push("<h3>[ COST BY ROLE ]</h3>");
+  out.push("<pre>" + ((D.cost_by_role || []).length
+    ? D.cost_by_role.map((r) => `${esc(r.role)}: ${r.calls} call(s), cost ${r.cost}`).join("\n")
+    : "(none)") + "</pre>");
+  out.push("<h3>[ STORY SUMMARY ] (newest 5)</h3>");
+  out.push("<pre>" + ((D.story_summary || []).length
+    ? D.story_summary.map((s) => `#${s.id} uptoT${s.upto_tick} ${esc(s.text)}`).join("\n")
     : "(none)") + "</pre>");
   out.push(`<details><summary class="dimline">raw payload</summary><pre>${esc(JSON.stringify(D, null, 2))}</pre></details>`);
   $("debug-body").innerHTML = out.join("");
@@ -729,14 +710,15 @@ function renderPrompts() {
   const p = D.prompts || {};
   const out = [];
   out.push("<h3>[ CONFIG ]</h3>");
+  const roles = p.roles || {};
   out.push(`<div class="kv">
     <span>language</span><span>${esc(p.language ?? "-")}</span>
-    <span>model</span><span>${esc(p.model ?? "offline")}</span>
-    <span>reasoning</span><span>${p.reasoning ? "on" : "off"}</span>
+    <span>mode</span><span>${p.configured ? "LLM" : "offline"}</span>
+    ${Object.entries(roles).map(([r, c]) => `<span>${esc(r)}</span><span>${esc(c.model ?? "offline")}${c.reasoning ? " +reasoning" : ""}</span>`).join("")}
   </div>`);
   out.push("<h3>[ EDIT ]</h3>");
   out.push(`<div class="dimline">Edits apply to the next LLM call. Empty a field to restore its default. Keep the JSON contract
-    (<code>{"narration": ..., "options": [...]}</code>) or the narrator falls back to offline.</div>`);
+    (<code>{"narration": ...}</code>) or the narrator falls back to offline.</div>`);
   out.push(`<label class="field">system prompt ${p.systemCustom ? '<span class="warn">custom</span>' : '<span class="dimline">default</span>'}
     <textarea id="prompt-system" rows="9" spellcheck="false">${esc(p.system ?? "")}</textarea></label>`);
   out.push(`<label class="field">retry hint ${p.retryCustom ? '<span class="warn">custom</span>' : '<span class="dimline">default</span>'}
@@ -864,12 +846,11 @@ addEventListener("keydown", (e) => {
   const KEYS = { ArrowUp: "N", w: "N", ArrowDown: "S", s: "S", ArrowRight: "E", d: "E", ArrowLeft: "W", a: "W" };
   if (KEYS[k]) { e.preventDefault(); act({ type: "move", dir: KEYS[k] }); }
   else if (k === " ") { e.preventDefault(); act({ type: "wait" }); }
-  else if (/^[1-3]$/.test(k) && S.options[+k - 1]) { e.preventDefault(); selected = +k - 1; markSelected(); act(S.options[selected].action); }
   else if (k === "/") { e.preventDefault(); $("cmd").focus(); }
   else if (k === "?" || e.key === "F1") { e.preventDefault(); openHelp(); }
   else if (e.key === "Escape") { e.preventDefault(); blurPanel(); }
   else if (e.key === "Tab") { e.preventDefault(); cycleFocus(e.shiftKey ? -1 : 1); }
-  else if (e.key === "Enter") { e.preventDefault(); confirmSelected(); }
+  else if (e.key === "Enter") { const fi = $("free-input"); if (fi) { e.preventDefault(); fi.focus(); } }
 });
 
 addEventListener("resize", normalizeTab);

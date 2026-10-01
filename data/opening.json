@@ -4,6 +4,6 @@
     { "altitude": "through the clouds" },
     { "altitude": "above the rooftops" }
   ],
-  "abilities": { "brace": { "ether_cost": 2 } },
+  "brace_ability": "brace",
   "landing": { "steer_room": "living_room" }
 }

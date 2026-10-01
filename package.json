@@ -1,12 +1,12 @@
 {
   "name": "nikostory2",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
-    "test": "tsx --test test/smoke.test.ts test/narrator.test.ts test/memory.test.ts test/agenda.test.ts test/conversation.test.ts test/opening.test.ts",
+    "test": "tsx --test test/smoke.test.ts test/narrator.test.ts test/memory.test.ts test/agenda.test.ts test/conversation.test.ts test/opening.test.ts test/interpreter.test.ts test/npc.test.ts",
     "check": "tsc --noEmit && npm test"
   },
   "dependencies": {

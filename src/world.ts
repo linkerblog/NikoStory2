@@ -25,11 +25,12 @@ export interface Ent {
 // The setting the narrator must not contradict. Authored in `data/world.json`.
 export interface WorldFacts { year: number; country: string; facts: string[]; style: string }
 
-// The scripted fall that opens a new game. Authored in `data/opening.json`.
+// The scripted fall that opens a new game. Authored in `data/opening.json`. `brace_ability` is the
+// id of an ability in `data/rules.json`: the opening references it, the engine resolves its cost.
 export interface OpeningBeat { altitude: string }
 export interface Opening {
   beats: OpeningBeat[];
-  abilities: { brace: { ether_cost: number } };
+  braceAbility: string;
   landing: { steer_room: string };
 }
 
@@ -37,7 +38,7 @@ export const DEFAULT_WORLD: WorldFacts = { year: 2030, country: "United States",
 
 export const DEFAULT_OPENING: Opening = {
   beats: [{ altitude: "high above the clouds" }, { altitude: "through the clouds" }, { altitude: "above the rooftops" }],
-  abilities: { brace: { ether_cost: 2 } },
+  braceAbility: "brace",
   landing: { steer_room: "living_room" },
 };
 
@@ -49,21 +50,21 @@ export function loadWorld(dataDir: string): WorldFacts {
   return { year: w.year, country: w.country, facts: w.facts, style: w.style ?? "" };
 }
 
-// A malformed opening is rejected, not trusted: at least one beat, a non-negative integer cost and,
-// when a zone is given, a room id that exists in that zone.
+// A malformed opening is rejected, not trusted: at least one beat, a brace ability id and, when a
+// zone is given, a room id that exists in that zone. The ability's cost lives in `data/rules.json`.
 export function loadOpening(dataDir: string, zone?: Zone): Opening {
   const o = read<Opening>(`${dataDir}/opening.json`);
   if (!Array.isArray(o.beats) || o.beats.length === 0 || o.beats.some((b) => typeof b?.altitude !== "string" || !b.altitude)) {
     throw new Error("opening.json needs at least one beat with a non-empty altitude");
   }
-  const cost = o.abilities?.brace?.ether_cost;
-  if (!Number.isInteger(cost) || cost < 0) throw new Error("opening.json brace cost must be a non-negative integer");
+  const braceAbility = (o as { brace_ability?: unknown }).brace_ability;
+  if (typeof braceAbility !== "string" || !braceAbility) throw new Error("opening.json needs a brace ability id");
   const room = o.landing?.steer_room;
   if (typeof room !== "string" || !room) throw new Error("opening.json needs a steer room id");
   if (zone && !zone.rooms.some((r) => r.id === room)) throw new Error(`opening.json steer room ${room} is not in zone ${zone.id}`);
   return {
     beats: o.beats.map((b) => ({ altitude: b.altitude })),
-    abilities: { brace: { ether_cost: cost } },
+    braceAbility,
     landing: { steer_room: room },
   };
 }

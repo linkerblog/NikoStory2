@@ -4,14 +4,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createGame } from "../src/game.js";
-import { OfflineNarrator } from "../src/narrator.js";
+import { createGame, offlineServices } from "../src/game.js";
 import type { Db } from "../src/db.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 // Skips the opening: a legacy save without a `phase` plays as `play`. The fall is in `opening.test.ts`.
 const create = (path = ":memory:", seed = 1337) => {
-  const g = createGame(path, DATA, seed, () => new OfflineNarrator());
+  const g = createGame(path, DATA, seed, () => offlineServices());
   g.db.prepare("UPDATE settings SET value = 'play' WHERE key = 'phase'").run();
   return g;
 };

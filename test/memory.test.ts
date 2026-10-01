@@ -4,17 +4,19 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createGame } from "../src/game.js";
+import { createGame, offlineServices } from "../src/game.js";
 import { openDb, type Db } from "../src/db.js";
-import { OfflineNarrator } from "../src/narrator.js";
+import type { EngineServices } from "../src/engine.js";
+import type { Context, Narrator } from "../src/narrator.js";
+import type { Interpreter } from "../src/interpreter.js";
 import {
-  DEFAULT_MEMORY_RULES, loadMemoryRules, memoryFromEvent, recall, type MemoryEvent,
+  DEFAULT_MEMORY_RULES, loadMemoryRules, memoryFromEvent, recall, type MemoryEvent, type MemoryWriter,
 } from "../src/memory.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 // Skips the opening: a legacy save without a `phase` plays as `play`. The fall is in `opening.test.ts`.
-const create = (path = ":memory:", seed = 1337) => {
-  const g = createGame(path, DATA, seed, () => new OfflineNarrator());
+const create = (path = ":memory:", seed = 1337, overrides: Partial<EngineServices> = {}) => {
+  const g = createGame(path, DATA, seed, () => ({ ...offlineServices(), ...overrides }));
   g.db.prepare("UPDATE settings SET value = 'play' WHERE key = 'phase'").run();
   return g;
 };
@@ -34,7 +36,7 @@ test("the memories migration applies on an older schema and keeps existing rows"
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6]);
   assert.equal((db2.prepare("SELECT COUNT(*) c FROM memories").get() as { c: number }).c, 0);
   assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
   db2.close();
@@ -190,4 +192,44 @@ test("a talked event creates memories only for its witnesses (Dev-002 regression
     .get(event.id) as { importance: number; text: string };
   assert.equal(memory.importance, 7);
   assert.match(memory.text, /talked with Marta/);
+});
+
+test("the memory role words the events that matter and a failure falls back to the template", async () => {
+  const custom: MemoryWriter = {
+    async write(events) {
+      return events.flatMap((e) => e.witnesses.map((w) => ({ event_id: e.id, character_id: w, text: `written ${e.type}`, importance: 9 })));
+    },
+    async summarize() { return null; },
+  };
+  const good = create(":memory:", 1337, { memories: custom });
+  await good.engine.start();
+  await good.engine.takeTurn({ type: "free", text: "do a backflip" }); // the offline interpreter answers it as a `say`
+  const event = good.db.prepare("SELECT id FROM events WHERE type = 'say' ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined;
+  assert.ok(event);
+  const rows = good.db.prepare("SELECT text, importance FROM memories WHERE event_id = ?").all(event!.id) as
+    { text: string; importance: number }[];
+  assert.ok(rows.length > 0);
+  assert.equal(rows[0].text, "written say");
+  assert.equal(rows[0].importance, 9);
+
+  const broken = create(":memory:", 1337, {
+    memories: { async write() { throw new Error("boom"); }, async summarize() { return null; } },
+  });
+  await broken.engine.start();
+  await broken.engine.takeTurn({ type: "free", text: "do a backflip" });
+  const bad = broken.db.prepare(
+    "SELECT m.text AS text FROM memories m JOIN events e ON e.id = m.event_id WHERE e.type = 'say' LIMIT 1",
+  ).get() as { text: string } | undefined;
+  assert.ok(bad);
+  assert.match(bad!.text, /did something/);
+});
+
+test("the interpreter keywords reach the narrator's memory query", async () => {
+  let captured: Context | undefined;
+  const narrator: Narrator = { async narrate(c) { captured = c; return { text: "ok" }; } };
+  const interp: Interpreter = { async interpret() { return { effects: [{ kind: "wait" }], keywords: ["crate", "fridge"] }; } };
+  const { engine } = create(":memory:", 1337, { narrator, interpreter: interp });
+  await engine.start();
+  assert.equal((await engine.takeTurn({ type: "free", text: "open the crate" })).ok, true);
+  assert.deepEqual(captured?.memory?.keywords, ["crate", "fridge"]);
 });

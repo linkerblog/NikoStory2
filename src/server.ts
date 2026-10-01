@@ -2,9 +2,14 @@ import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createGame } from "./game.js";
+import { createGame, offlineServices } from "./game.js";
 import { deleteMeta, getMeta, setMeta } from "./db.js";
-import { OfflineNarrator, OpenRouterNarrator, RETRY_HINT, systemPrompt, type Narrator } from "./narrator.js";
+import { RETRY_HINT, OpenRouterNarrator, systemPrompt } from "./narrator.js";
+import { OpenRouterInterpreter } from "./interpreter.js";
+import { OpenRouterMemories } from "./memory.js";
+import { OpenRouterNpcDecider } from "./npc.js";
+import { LLM_ROLES, LlmClient, type LlmRole, type RoleConfig } from "./llm.js";
+import type { EngineServices } from "./engine.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -18,30 +23,69 @@ if (existsSync(envPath)) {
 }
 
 const env = process.env;
-const { engine, reset, db } = createGame(join(root, env.DB_PATH ?? "game.db"), join(root, "data"), Number(env.SEED ?? 1337), (db, rules, stakes): Narrator => {
-  if (env.OPENROUTER_API_KEY && env.NARRATOR_MODEL) {
-    const reasoning = env.NARRATOR_REASONING === "1";
-    console.log(`Narrator: OpenRouter (${env.NARRATOR_MODEL})${reasoning ? " with reasoning streaming" : ""}`);
-    return new OpenRouterNarrator(db, {
-      apiKey: env.OPENROUTER_API_KEY, model: env.NARRATOR_MODEL,
-      language: env.NARRATION_LANGUAGE ?? "English", spendCapUsd: Number(env.SPEND_CAP_USD ?? 0.5),
-      reasoning,
-    }, rules, stakes);
+
+// Each role gets its own model, reasoning flag and idle timeout. <ROLE>_MODEL defaults to
+// NARRATOR_MODEL; <ROLE>_REASONING defaults per role; <ROLE>_IDLE_MS defaults by the reasoning flag.
+const REASONING_DEFAULT: Record<LlmRole, boolean> = {
+  interpreter: true, narrator: false, architect: true, continuity: true, memory: false, npc: true,
+};
+
+function roleConfig(role: LlmRole): RoleConfig {
+  const key = role.toUpperCase();
+  const model = env[`${key}_MODEL`] || env.NARRATOR_MODEL!;
+  const reasoning = env[`${key}_REASONING`] !== undefined ? env[`${key}_REASONING`] === "1" : REASONING_DEFAULT[role];
+  const idleMs = Number(env[`${key}_IDLE_MS`] ?? (reasoning ? 120_000 : 60_000));
+  return { model, reasoning, idleMs };
+}
+
+function buildServices(db: import("./db.js").Db, memory: import("./memory.js").MemoryRules, stakes: import("./stakes.js").StakesRules): EngineServices {
+  if (!env.OPENROUTER_API_KEY || !env.NARRATOR_MODEL) {
+    console.log("Roles: offline (set OPENROUTER_API_KEY and NARRATOR_MODEL in .env to use the LLM)");
+    return offlineServices();
   }
-  console.log("Narrator: offline (set OPENROUTER_API_KEY and NARRATOR_MODEL in .env to use the LLM)");
-  return new OfflineNarrator();
-});
+  const roles = Object.fromEntries(LLM_ROLES.map((r) => [r, roleConfig(r)])) as Record<LlmRole, RoleConfig>;
+  const llm = new LlmClient(db, {
+    apiKey: env.OPENROUTER_API_KEY,
+    language: env.NARRATION_LANGUAGE ?? "English",
+    spendCapUsd: Number(env.SPEND_CAP_USD ?? 0.5),
+    roles,
+  });
+  const tag = (r: LlmRole) => `${r} ${roles[r].model}${roles[r].reasoning ? "(+reasoning)" : ""}`;
+  console.log(`Roles: ${LLM_ROLES.map(tag).join(", ")}`);
+  return {
+    narrator: new OpenRouterNarrator(llm, memory, stakes),
+    interpreter: new OpenRouterInterpreter(llm),
+    memories: new OpenRouterMemories(llm),
+    npcdecider: new OpenRouterNpcDecider(llm),
+  };
+}
+
+const { engine, reset, db } = createGame(
+  join(root, env.DB_PATH ?? "game.db"),
+  join(root, "data"),
+  Number(env.SEED ?? 1337),
+  buildServices,
+);
 await engine.start();
 
-// The effective narrator prompts: the debug-tab override when set, the built-in default otherwise.
+// The effective narrator prompts and role config: the debug-tab override when set, the default otherwise.
 function promptsPayload() {
   const language = env.NARRATION_LANGUAGE ?? "English";
   const sys = getMeta(db, "prompt_system");
   const ret = getMeta(db, "prompt_retry");
+  const configured = !!(env.OPENROUTER_API_KEY && env.NARRATOR_MODEL);
+  const roles = Object.fromEntries(
+    LLM_ROLES.map((r) => {
+      const cfg = roleConfig(r);
+      return [r, { model: cfg.model ?? null, reasoning: cfg.reasoning }];
+    }),
+  );
   return {
     language,
     model: env.NARRATOR_MODEL ?? null,
     reasoning: env.NARRATOR_REASONING === "1",
+    configured,
+    roles,
     system: sys || systemPrompt(language),
     retry: ret || RETRY_HINT,
     systemDefault: systemPrompt(language),
@@ -65,7 +109,7 @@ const readBody = (req: import("node:http").IncomingMessage) =>
 const wantsStream = (req: import("node:http").IncomingMessage) =>
   (req.headers.accept ?? "").includes("text/event-stream");
 
-// Server-Sent Events: the narrator's live deltas reach the client while the turn is still running.
+// Server-Sent Events: the turn's live deltas reach the client while it is still running.
 function sse(res: import("node:http").ServerResponse) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",

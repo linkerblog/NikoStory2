@@ -1,0 +1,20 @@
+{
+  "maxEffects": 4,
+  "maxPathSteps": 6,
+  "summaryEveryTicks": 20,
+  "npcThinkEveryTicks": 3,
+  "abilities": [
+    {
+      "id": "brace",
+      "ether_cost": 2,
+      "range": 0,
+      "description": "Cushion an impact by spending the Ether Core's charge."
+    }
+  ],
+  "limits": [
+    "Niko cannot fly.",
+    "Niko cannot walk through walls, sealed doors or people.",
+    "Niko cannot attack, take damage or use weapons yet."
+  ],
+  "risk": "Risky outcomes are rolled by the engine, never decided by the model: the interpreter describes intent, the engine resolves the result."
+}

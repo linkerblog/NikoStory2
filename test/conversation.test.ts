@@ -1,22 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createGame } from "../src/game.js";
-import { OfflineNarrator, type Narrator } from "../src/narrator.js";
+import { createGame, offlineServices } from "../src/game.js";
+import type { EngineServices } from "../src/engine.js";
+import type { Interpreter, InterpretContext } from "../src/interpreter.js";
 import type { Db } from "../src/db.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 
 // Skips the opening: a legacy save without a `phase` plays as `play`. The fall is in `opening.test.ts`.
-const create = (narrator: Narrator = new OfflineNarrator()) => {
-  const g = createGame(":memory:", DATA, 1337, () => narrator);
+const create = (overrides: Partial<EngineServices> = {}) => {
+  const g = createGame(":memory:", DATA, 1337, () => ({ ...offlineServices(), ...overrides }));
   g.db.prepare("UPDATE settings SET value = 'play' WHERE key = 'phase'").run();
   return g;
 };
 
 // Niko at (5,2) is next to Marta at (6,2), so the first `talk` has a valid target.
-const setup = async (narrator: Narrator = new OfflineNarrator()) => {
-  const g = create(narrator);
+const setup = async (overrides: Partial<EngineServices> = {}) => {
+  const g = create(overrides);
   g.db.prepare("UPDATE entities SET x = 5, y = 2 WHERE id = 'niko'").run();
   await g.engine.start();
   return g;
@@ -77,20 +78,21 @@ test("movement is refused while the conversation is open", async () => {
   assert.equal(r.ok, false);
 });
 
-test("the engine discards conversation options the narrator invented", async () => {
-  const liar: Narrator = { async narrate() { return { text: "x", options: [{ id: "nope", text: "Nope" }] }; } };
-  const { engine } = await setup(liar);
+test("the interpreter sees the open conversation and the offline one answers it", async () => {
+  let seen: InterpretContext | undefined;
+  const spy: Interpreter = {
+    async interpret(c) {
+      seen = c;
+      // The same text the offline interpreter would read: answering the open conversation.
+      return offlineServices().interpreter.interpret(c);
+    },
+  };
+  const { engine, db } = await setup({ interpreter: spy });
   await engine.takeTurn({ type: "talk", target: "marta" });
-  const texts = engine.state().options.map((o) => o.text);
-  assert.ok(!texts.includes("Nope"));
-  assert.ok(engine.state().options.some((o) => o.action.type === "reply"));
-});
-
-test("the engine injects talk for a waiting NPC the narrator ignored", async () => {
-  const liar: Narrator = { async narrate() { return { text: "x", options: [{ id: "nope", text: "Nope" }] }; } };
-  const g = create(liar);
-  g.db.prepare("UPDATE entities SET x = 5, y = 2 WHERE id = 'niko'").run();
-  g.db.prepare("INSERT INTO agenda_state (character_id, goal_id, status, since_tick) VALUES ('marta', 'marta_warn', 'arrived', 0)").run();
-  await g.engine.start();
-  assert.ok(g.engine.state().options.some((o) => o.action.type === "talk"));
+  const r = await engine.takeTurn({ type: "free", text: "reassure her" });
+  assert.equal(r.ok, true);
+  assert.ok(seen?.conversation);
+  assert.equal(seen!.conversation!.npc_id, "marta");
+  const rows = db.prepare("SELECT data FROM events WHERE type = 'talk' ORDER BY id").all() as { data: string }[];
+  assert.ok(rows.some((row) => (JSON.parse(row.data) as { choice?: string }).choice === "reassure"));
 });
