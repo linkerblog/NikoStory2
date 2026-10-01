@@ -3,15 +3,22 @@ import { getMeta, setMeta, type Db } from "./db.js";
 
 export interface Obj { id: string; type: string; name: string; x: number; y: number; blocks: boolean }
 export interface Room { id: string; name: string; x: number; y: number; w: number; h: number }
+// A door: `(x, y)` is a 'D' tile in this zone and `to` is the zone it leads to. The entry tile in
+// the target is resolved from the target's own portal back to this zone, so no coordinates are
+// duplicated and two zones can never disagree about where the door puts you.
+export interface Portal { x: number; y: number; to: string; label: string }
+export type ZoneKind = "house" | "outdoor" | "building";
 export interface Zone {
   id: string; name: string; description: string;
   width: number; height: number;
-  map: string[]; // '#' wall, '.' floor, 'D' exit to a zone not yet generated
+  map: string[]; // '#' wall, '.' floor, 'D' door to another zone
   objects: Obj[];
   rooms: Room[];
+  portals: Portal[];
+  kind: ZoneKind;
 }
 export interface Ent {
-  id: string; type: "player" | "npc"; name: string;
+  id: string; type: "player" | "npc"; name: string; zone_id: string;
   x: number; y: number; data: Record<string, any>;
 }
 
@@ -68,6 +75,8 @@ export function loadZone(dataDir: string): Zone {
     throw new Error(`Zone ${z.id} does not match its declared width/height`);
   }
   z.rooms = z.rooms ?? [];
+  z.portals = z.portals ?? [];
+  z.kind = z.kind ?? "house";
   return z;
 }
 
@@ -92,6 +101,7 @@ export function seed(db: Db, dataDir: string, seedValue: number): void {
     setMeta(db, "phase", "fall");
     setMeta(db, "fall_beat", "0");
     setMeta(db, "fall_log", "[]");
+    setMeta(db, "fall_brace", "0");
     setMeta(db, "seeded", "1");
   })();
 }

@@ -5,115 +5,876 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NikoStory2</title>
 <style>
-  body { margin: 0; background: #14121a; color: #e8e6f0; font: 15px/1.5 system-ui, sans-serif;
-         display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; }
-  canvas { background: #1d1a26; border-radius: 8px; flex: none; }
-  #panel { flex: 1; min-width: 300px; max-width: 560px; display: flex; flex-direction: column; gap: 10px; }
-  #hud { color: #b9b3d1; font-size: 13px; }
-  #log { height: 340px; overflow: auto; background: #1d1a26; border-radius: 8px; padding: 12px; }
-  #log p { margin: 0 0 10px; }
-  .t { color: #8a84a3; font-size: 12px; }
-  #options { display: flex; flex-direction: column; gap: 6px; }
-  button { background: #2c2740; color: #e8e6f0; border: 1px solid #3f385c; border-radius: 6px;
-           padding: 8px 12px; text-align: left; font: inherit; cursor: pointer; }
-  button:hover { background: #38315a; }
-  #err { color: #ff8fa3; min-height: 1.4em; }
-  #help { color: #8a84a3; font-size: 12px; }
+  /* ---- Design tokens (Dev-005 section 3). Every value lives here. ---- */
+  :root {
+    --bg: #0b0e14;
+    --bg-panel: #10141c;
+    --bg-raised: #171c27;
+    --border: #252c3a;
+    --fg: #c9d1d9;
+    --fg-dim: #7d8590;
+    --accent: #5ee6c4;
+    --accent-2: #7aa2ff;
+    --warn: #f2cc60;
+    --danger: #ff6b6b;
+    --ok: #8ddb8c;
+    --mana: #b48ead;
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+    --radius: 4px;
+    --font: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --fs: 15px;
+    --focus: var(--accent);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; min-height: 100vh; display: flex;
+    background: var(--bg); color: var(--fg);
+    font: var(--fs) / 1.6 var(--font);
+  }
+  button, input { font: inherit; }
+  kbd {
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 var(--s1); color: var(--fg); white-space: nowrap;
+  }
+
+  /* Centered shell: margin auto centers on both axes, then the grid grows to fill the viewport. */
+  .app {
+    margin: auto; width: 100%; max-width: 1680px; min-height: 100vh; min-height: 100dvh;
+    padding: var(--s3); display: flex; flex-direction: column; gap: var(--s2);
+  }
+
+  .topbar { display: flex; align-items: baseline; gap: var(--s3); }
+  .brand { font-weight: 600; color: var(--accent); letter-spacing: 0.5px; }
+  .clock { color: var(--fg-dim); font-size: 14px; margin-left: auto; }
+  .views { display: flex; gap: var(--s1); margin-left: var(--s3); }
+  .views .tab { flex: none; padding: var(--s1) var(--s3); font-size: 13px; }
+  .btn {
+    background: var(--bg-raised); color: var(--fg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: var(--s1) var(--s3); cursor: pointer;
+    transition: border-color 120ms ease-out, color 120ms ease-out;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:focus-visible { outline: none; border-color: var(--focus); }
+
+  .main { display: grid; grid-template-columns: 3fr 4fr 3fr; gap: var(--s2); flex: 1 1 auto; min-height: 0; }
+
+  .panel {
+    display: flex; flex-direction: column; min-height: 0; min-width: 0;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+    transition: border-color 120ms ease-out;
+  }
+  .panel:focus { outline: none; }
+  .panel.focused, .panel:focus-visible { border-color: var(--focus); }
+  .panel-head {
+    display: flex; align-items: center; gap: var(--s2); cursor: pointer; user-select: none;
+    padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border);
+    color: var(--fg-dim); font-weight: 600; font-size: 13px; letter-spacing: 0.5px;
+  }
+  .panel-head:hover { color: var(--fg); }
+  .panel-hint { margin-left: auto; color: var(--fg-dim); font-weight: 400; letter-spacing: 0; }
+  .body { padding: var(--s3); overflow: auto; flex: 1; min-height: 0; }
+  .panel.collapsed .body, .panel.collapsed .subhead { display: none; }
+
+  /* Log */
+  #log { font-variant-ligatures: none; }
+  .log-line { margin: 0 0 var(--s3); }
+  .log-line .ts { color: var(--fg-dim); font-size: 12px; }
+  .log-line .tx { color: var(--fg); }
+  #log .log-line:last-child .tx { color: var(--accent); }
+
+  /* Map */
+  #map { display: block; max-width: 100%; height: auto; background: var(--bg-raised); border-radius: var(--radius); }
+  .legend { margin-top: var(--s3); color: var(--fg-dim); font-size: 12px; }
+  .legend b { font-weight: 600; }
+  .g-niko { color: var(--accent); } .g-npc { color: var(--warn); }
+  .g-door { color: var(--warn); } .g-obj { color: var(--accent-2); }
+
+  /* Status + nearby */
+  .stat-name { color: var(--accent); font-weight: 600; margin-bottom: var(--s2); }
+  .stat-row { display: flex; gap: var(--s2); align-items: baseline; margin-bottom: var(--s1); }
+  .stat-row .k { color: var(--fg-dim); width: 52px; flex: none; }
+  .stat-row .v { color: var(--fg); }
+  .bar { letter-spacing: 1px; }
+  .bar.mana { color: var(--mana); }
+  .subhead {
+    padding: var(--s2) var(--s3); border-top: 1px solid var(--border);
+    color: var(--fg-dim); font-weight: 600; font-size: 13px; letter-spacing: 0.5px;
+  }
+  .near { color: var(--fg); }
+  .dim { color: var(--fg-dim); }
+
+  /* Options */
+  #options { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .option {
+    display: flex; align-items: center; gap: var(--s2);
+    background: var(--bg-raised); color: var(--fg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: var(--s2) var(--s3); cursor: pointer; text-align: left;
+    transition: background 120ms ease-out, border-color 120ms ease-out;
+  }
+  .option:hover, .option.selected { background: #1d2331; border-color: var(--accent); }
+  .option:focus-visible { outline: none; border-color: var(--focus); }
+  .option .num { color: var(--accent); font-weight: 600; }
+  .option .mark { color: var(--accent); }
+  .option .lbl { color: var(--fg); }
+  .option:disabled { opacity: 0.5; cursor: progress; border-color: var(--border); background: var(--bg-panel); }
+  .option:disabled .num, .option:disabled .mark { color: var(--fg-dim); }
+
+  /* Free-text action, available in every phase */
+  .fall-prompt { flex-basis: 100%; color: var(--fg); font-weight: 600; margin-bottom: var(--s2); }
+  .fall-row { flex-basis: 100%; display: flex; gap: var(--s2); }
+  .fall-row input {
+    flex: 1; min-width: 0; background: var(--bg-raised); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s2) var(--s3);
+  }
+  .fall-row input:focus { outline: none; border-color: var(--focus); }
+
+  /* Live narration draft while the LLM streams */
+  .log-line.streaming .tx { color: var(--accent); }
+  .log-line.streaming .tx::after { content: "\2588"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+  .log-line.thinking .ts { color: var(--accent-2); }
+  .log-line.thinking .tx { color: var(--fg-dim); font-size: 13px; white-space: pre-wrap; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Command line */
+  .cmdline {
+    display: flex; align-items: center; gap: var(--s2);
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: var(--s2) var(--s3);
+  }
+  .cmdline:focus-within { border-color: var(--accent); }
+  .prompt { color: var(--accent); }
+  #cmd { flex: 1; min-width: 0; background: transparent; border: none; color: var(--fg); outline: none; }
+  .hint { color: var(--fg-dim); font-size: 12px; white-space: nowrap; }
+  .error { color: var(--danger); min-height: 1.2em; font-size: 13px; }
+
+  /* Tabs (small screens) */
+  .tabbar { display: none; gap: var(--s1); }
+  .tab {
+    flex: 1; background: var(--bg-panel); color: var(--fg-dim); border: 1px solid var(--border);
+    border-bottom: 2px solid transparent; border-radius: var(--radius); padding: var(--s2); cursor: pointer;
+  }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); background: var(--bg-raised); }
+  .tab:focus-visible { outline: none; border-color: var(--focus); }
+
+  /* Debug view: a tab apart from the game, sharing the same shell. */
+  .head-btn { margin-left: auto; padding: 0 var(--s2); font-size: 12px; }
+  #panel-debug { display: none; flex: 1 1 auto; min-height: 0; }
+  body[data-view="debug"] #panel-debug { display: flex; }
+  body[data-view="debug"] .main,
+  body[data-view="debug"] #panel-actions,
+  body[data-view="debug"] .cmdline { display: none; }
+  .subtabs { display: flex; gap: var(--s1); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); }
+  .subtabs .tab { flex: none; padding: var(--s1) var(--s3); font-size: 13px; }
+  .debug-body { font-size: 13px; line-height: 1.5; }
+  .debug-body h3 { margin: var(--s3) 0 var(--s2); font-size: 13px; font-weight: 600; color: var(--accent); }
+  .debug-body h3:first-child { margin-top: 0; }
+  .debug-body .kv { display: grid; grid-template-columns: auto 1fr; gap: 0 var(--s2); }
+  .debug-body .kv span:nth-child(odd) { color: var(--fg-dim); }
+  .debug-body pre { margin: 0 0 var(--s2); white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+  .debug-body .dimline { color: var(--fg-dim); }
+  .debug-body .acc { color: var(--accent-2); }
+  .debug-body .warn { color: var(--warn); }
+  .debug-body details { margin: 0 0 var(--s2); }
+  .debug-body summary { cursor: pointer; color: var(--accent-2); }
+  .debug-body .field { display: block; margin: 0 0 var(--s2); color: var(--fg-dim); }
+  .debug-body .field > span { margin-left: var(--s2); font-size: 12px; }
+  .debug-body textarea {
+    display: block; width: 100%; margin-top: var(--s1); background: var(--bg-raised); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s2);
+    font: inherit; resize: vertical;
+  }
+  .debug-body textarea:focus { outline: none; border-color: var(--focus); }
+  .prompt-actions { display: flex; gap: var(--s2); align-items: center; margin-bottom: var(--s3); }
+
+  /* Overlays, modal, toast */
+  .overlay {
+    position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    padding: var(--s3); background: rgba(0, 0, 0, 0.6);
+  }
+  .overlay[hidden] { display: none; }
+  .modal {
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: var(--s4); width: 100%; max-width: 520px; max-height: 80vh; overflow: auto;
+  }
+  .modal h2 { margin: 0 0 var(--s3); font-size: var(--fs); font-weight: 600; color: var(--accent); }
+  .modal dl { display: grid; grid-template-columns: auto 1fr; gap: var(--s2) var(--s3); margin: 0; }
+  .modal dt { color: var(--accent-2); }
+  .modal dd { margin: 0; }
+  .modal .actions { margin-top: var(--s4); display: flex; gap: var(--s2); justify-content: flex-end; }
+  .toast {
+    position: fixed; right: var(--s4); bottom: var(--s4); z-index: 20; max-width: 340px;
+    background: var(--bg-raised); border: 1px solid var(--accent); border-radius: var(--radius);
+    padding: var(--s2) var(--s3); color: var(--fg);
+  }
+  .toast[hidden] { display: none; }
+  .toast.error { border-color: var(--danger); color: var(--danger); }
+
+  /* Responsive: 700-1099 keeps Log and a Map/Status tab; below 700 is a single column. */
+  @media (max-width: 1099px) and (min-width: 700px) {
+    .tabbar { display: flex; }
+    .main { grid-template-columns: 1fr 1fr; }
+    #panel-map, #panel-status { display: none; }
+    #panel-log { display: flex; }
+    body[data-tab="map"] #panel-map { display: flex; }
+    body[data-tab="map"] #panel-status { display: none; }
+    body[data-tab="status"] #panel-status { display: flex; }
+    .tab[data-tab="log"], .tab[data-tab="actions"] { display: none; }
+  }
+  @media (max-width: 699px) {
+    .tabbar { display: flex; }
+    .main { grid-template-columns: 1fr; height: clamp(240px, 42vh, 380px); flex: none; }
+    #panel-log, #panel-map, #panel-status { display: none; }
+    body[data-tab="log"] #panel-log { display: flex; }
+    body[data-tab="map"] #panel-map { display: flex; }
+    body[data-tab="status"] #panel-status { display: flex; }
+    #panel-actions { display: none; }
+    body[data-tab="actions"] #panel-actions { display: flex; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
 </style>
 </head>
-<body>
-<canvas id="map"></canvas>
-<div id="panel">
-  <div id="hud"></div>
-  <div id="log"></div>
-  <div id="err"></div>
-  <div id="options"></div>
-  <div id="help">Move: arrows or WASD · Wait: space · Options: keys 1-3</div>
-</div>
-<script>
-const C = 36;
-const cv = document.getElementById("map"), cx = cv.getContext("2d");
-const $ = (id) => document.getElementById(id);
-let S = null, busy = false;
+<body data-tab="log">
+<div class="app">
+  <header class="topbar">
+    <span class="brand">NikoStory2</span>
+    <nav class="views" id="views" role="tablist" aria-label="Views">
+      <button class="tab" type="button" role="tab" data-view="game" aria-selected="true">Game</button>
+      <button class="tab" type="button" role="tab" data-view="debug" aria-selected="false">Debug</button>
+    </nav>
+    <span class="clock" id="clock">T:0000</span>
+    <button class="btn" id="reset-btn" type="button">Reset</button>
+  </header>
 
+  <div class="main">
+    <section class="panel" id="panel-map" tabindex="0" aria-label="Map">
+      <header class="panel-head"><span>[ MAP ]</span><span class="panel-hint" id="map-hint"></span></header>
+      <div class="body" id="map-body">
+        <canvas id="map"></canvas>
+        <div class="legend">Legend: <b class="g-niko">N</b> you &nbsp; <b class="g-npc">M</b> NPC &nbsp;
+          <b class="g-door">D</b> door &nbsp; <b class="g-obj">&#9642;</b> object &nbsp;&middot;&nbsp; 1 tile = 1 m</div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-log" tabindex="0" aria-label="Log">
+      <header class="panel-head"><span>[ LOG ]</span></header>
+      <div class="body" id="log" role="log" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" id="panel-status" tabindex="0" aria-label="Status">
+      <header class="panel-head"><span>[ STATUS ]</span></header>
+      <div class="body" id="status"></div>
+      <div class="subhead">[ NEARBY ]</div>
+      <div class="body" id="nearby"></div>
+    </section>
+  </div>
+
+  <section class="panel" id="panel-debug" aria-label="Debug">
+    <header class="panel-head"><span>[ DEBUG ]</span>
+      <button class="btn head-btn" id="debug-refresh" type="button">Refresh</button></header>
+    <nav class="subtabs" id="debug-tabs" role="tablist" aria-label="Debug sections">
+      <button class="tab" type="button" role="tab" data-dtab="overview" aria-selected="true">Overview</button>
+      <button class="tab" type="button" role="tab" data-dtab="prompts" aria-selected="false">Prompts</button>
+    </nav>
+    <div class="body debug-body" id="debug-body"></div>
+  </section>
+
+  <nav class="tabbar" id="tabbar" role="tablist" aria-label="Panels">
+    <button class="tab" type="button" role="tab" data-tab="log">Log</button>
+    <button class="tab" type="button" role="tab" data-tab="map">Map</button>
+    <button class="tab" type="button" role="tab" data-tab="status">Status</button>
+    <button class="tab" type="button" role="tab" data-tab="actions">Actions</button>
+    <button class="tab" type="button" role="tab" data-tab="debug">Debug</button>
+  </nav>
+
+  <section class="panel" id="panel-actions">
+    <header class="panel-head"><span>[ ACTIONS ]</span></header>
+    <div class="body" id="options"></div>
+  </section>
+
+  <form class="cmdline" id="cmdline" autocomplete="off">
+    <span class="prompt">niko@world:~$</span>
+    <input id="cmd" type="text" aria-label="Command line" spellcheck="false" autocomplete="off">
+    <span class="hint">F1 help</span>
+  </form>
+  <div class="error" id="err" role="alert"></div>
+</div>
+
+<div class="overlay" id="help" role="dialog" aria-modal="true" aria-label="Help" hidden>
+  <div class="modal">
+    <h2>[ HELP ]</h2>
+    <dl>
+      <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Choose the matching action</dd>
+      <dt><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd> / <kbd>WASD</kbd></dt><dd>Move Niko one tile</dd>
+      <dt><kbd>Space</kbd></dt><dd>Wait one turn</dd>
+      <dt><kbd>Enter</kbd></dt><dd>Confirm the selected action</dd>
+      <dt>free text</dt><dd>Type anything in the Actions box or the command line: go north, talk to Marta, wait, examine the crate</dd>
+      <dt><kbd>/</kbd></dt><dd>Focus the command line</dd>
+      <dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> in the command line</dt><dd>Browse command history</dd>
+      <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Cycle focus between panels</dd>
+      <dt><kbd>g</kbd> then <kbd>m</kbd> <kbd>l</kbd> <kbd>s</kbd> <kbd>i</kbd></dt><dd>Jump to Map / Log / Status / Inventory</dd>
+      <dt><kbd>?</kbd> or <kbd>F1</kbd></dt><dd>Toggle this help</dd>
+      <dt><kbd>F2</kbd></dt><dd>Toggle the debug tab</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close overlay, clear focus</dd>
+    </dl>
+    <div class="actions"><button class="btn" id="help-close" type="button">Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="confirm" role="dialog" aria-modal="true" aria-label="Confirm reset" hidden>
+  <div class="modal">
+    <h2>[ RESET ]</h2>
+    <p>Start a new game? All progress in this save will be lost.</p>
+    <div class="actions">
+      <button class="btn" id="confirm-cancel" type="button">Cancel</button>
+      <button class="btn" id="confirm-ok" type="button">Start new game</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const cv = $("map"), cx = cv.getContext("2d");
+let C = 36; // pixels per tile; shrinks for big zones so the whole map stays visible
+const cellSize = (zone) => Math.max(12, Math.min(36, Math.floor(640 / Math.max(zone.width, zone.height))));
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// The canvas mirrors the design tokens instead of hardcoding colors.
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const T = {
+  bg: cssVar("--bg"), panel: cssVar("--bg-panel"), raised: cssVar("--bg-raised"),
+  border: cssVar("--border"), fg: cssVar("--fg"), dim: cssVar("--fg-dim"),
+  accent: cssVar("--accent"), accent2: cssVar("--accent-2"), warn: cssVar("--warn"),
+};
+
+let S = null, D = null, busy = false, selected = 0, gPending = false, debugTab = "overview";
+let revealTimer = null, revealedText = null, toastTimer = null;
+const hist = [];
+let histIdx = 0;
+const FOCUSABLE = ["log", "map", "status"];
+
+const pad = (n) => String(n).padStart(4, "0");
+const esc = (s) => String(s).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+const bar = (v, max) => {
+  const n = Math.max(0, Math.min(10, Math.round((v / Math.max(1, max)) * 10)));
+  return "\u2588".repeat(n) + "\u2591".repeat(10 - n);
+};
+
+// ---- Data flow: the client only fetches snapshots and posts actions. ----
 async function load() { S = await (await fetch("/api/state")).json(); render(); }
 
-async function act(action) {
-  if (busy) return;
-  busy = true;
-  $("err").textContent = "";
+let streamText = "";
+function act(action) { return send("/api/turn", action); }
+function resetGame() { return send("/api/reset", {}, () => toast("New game started.")); }
+
+async function send(url, body, after) {
+  if (busy || !S) return;
+  busy = true; setError(""); setBusy(true); beginStream();
   try {
-    const r = await (await fetch("/api/turn", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(action),
-    })).json();
-    if (!r.ok) $("err").textContent = r.error || "Cannot do that.";
-    if (r.state) { S = r.state; render(); }
-  } finally { busy = false; }
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: JSON.stringify(body || {}),
+    });
+    const type = r.headers.get("content-type") || "";
+    if (!r.ok || !type.includes("text/event-stream")) {
+      const j = await r.json().catch(() => ({}));
+      if (!j.ok) setError(j.error || "Cannot do that.");
+      if (j.state) { S = j.state; render(); }
+      if (j.ok && after) after();
+      return;
+    }
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        handleEvent(block, after);
+      }
+    }
+  } catch { setError("Network error: the request did not reach the engine."); }
+  finally { busy = false; setBusy(false); endStream(); if (document.body.dataset.view === "debug" && debugTab !== "prompts") loadDebug(); }
 }
 
+function handleEvent(block, after) {
+  let ev = "", data = "";
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) ev = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  if (!data) return;
+  let payload; try { payload = JSON.parse(data); } catch { return; }
+  if (ev === "delta") return applyDelta(payload);
+  if (ev === "done") {
+    // A streamed narration is already on screen: skip the typewriter so it does not replay.
+    if (payload.state) { S = payload.state; revealedText = streamText || null; render(); }
+    if (!payload.ok) setError(payload.error || "Cannot do that.");
+    else if (after) after();
+    return;
+  }
+  if (ev === "error") setError(payload.error || "Internal error.");
+}
+
+// A single live draft per kind; render() replaces it with the final log line when the turn ends.
+function draft(kind, tag) {
+  const el = $("log");
+  let p = el.querySelector(".log-line." + kind);
+  if (!p) {
+    p = document.createElement("p");
+    p.className = "log-line " + kind;
+    p.innerHTML = `<span class="ts">${tag}</span> <span class="tx"></span>`;
+    el.appendChild(p);
+  }
+  el.scrollTop = el.scrollHeight;
+  return p.querySelector(".tx");
+}
+function removeDrafts() {
+  document.querySelectorAll("#log .log-line.streaming, #log .log-line.thinking").forEach((el) => el.remove());
+}
+function beginStream() { streamText = ""; removeDrafts(); }
+function endStream() { removeDrafts(); streamText = ""; }
+function applyDelta(d) {
+  if (d.kind === "reset") { streamText = ""; removeDrafts(); return; }
+  if (d.kind === "reasoning") { draft("thinking", "?").textContent += d.text; return; }
+  if (d.kind === "text") { streamText += d.text; draft("streaming", "~").textContent = streamText; }
+}
+function setBusy(on) {
+  document.querySelectorAll("#options .option").forEach((b) => { b.disabled = on; });
+  const rb = $("reset-btn"); if (rb) rb.disabled = on;
+  const fb = $("free-go"); if (fb) fb.disabled = on;
+  const fi = $("free-input"); if (fi) fi.disabled = on;
+}
+
+function setError(msg) {
+  $("err").textContent = msg || "";
+  if (msg) toast(msg, true);
+}
+function toast(msg, isError) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.toggle("error", !!isError);
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3000);
+}
+
+// ---- Canvas map (drawn from the snapshot, never simulated here). ----
 function cell(x, y, color, inset = 0) {
   cx.fillStyle = color;
   cx.fillRect(x * C + inset, y * C + inset, C - inset * 2, C - inset * 2);
 }
 function token(x, y, color, letter) {
   cx.fillStyle = color;
-  cx.beginPath(); cx.arc(x * C + C / 2, y * C + C / 2, C / 2 - 4, 0, Math.PI * 2); cx.fill();
-  cx.fillStyle = "#14121a"; cx.font = "bold 16px system-ui"; cx.textAlign = "center"; cx.textBaseline = "middle";
+  cx.beginPath(); cx.arc(x * C + C / 2, y * C + C / 2, Math.max(3, C / 2 - 4), 0, Math.PI * 2); cx.fill();
+  cx.fillStyle = T.bg; cx.font = `bold ${Math.max(8, Math.round(C * 0.45))}px ` + cssVar("--font");
+  cx.textAlign = "center"; cx.textBaseline = "middle";
   cx.fillText(letter, x * C + C / 2, y * C + C / 2 + 1);
 }
-
 function drawSky() {
+  C = cellSize(S.zone);
   cv.width = S.zone.width * C;
   cv.height = Math.round(S.zone.height * C / 2);
   const g = cx.createLinearGradient(0, 0, 0, cv.height);
-  g.addColorStop(0, "#171d38"); g.addColorStop(1, "#46558c");
+  g.addColorStop(0, T.bg); g.addColorStop(1, T.border);
   cx.fillStyle = g; cx.fillRect(0, 0, cv.width, cv.height);
-  cx.fillStyle = "#e8e6f0"; cx.font = "18px system-ui"; cx.textAlign = "center"; cx.textBaseline = "middle";
+  cx.fillStyle = T.fg; cx.font = "18px " + cssVar("--font"); cx.textAlign = "center"; cx.textBaseline = "middle";
   cx.fillText(S.fall.altitude, cv.width / 2, cv.height / 2);
 }
-
 function drawMap() {
   const z = S.zone;
+  C = cellSize(z);
   cv.width = z.width * C; cv.height = z.height * C;
   for (let y = 0; y < z.height; y++) for (let x = 0; x < z.width; x++) {
     const c = z.map[y][x];
-    cell(x, y, c === "#" ? "#3a3550" : c === "D" ? "#8a6d3b" : (x + y) % 2 ? "#262233" : "#2a2637");
+    cell(x, y, c === "#" ? T.border : c === "D" ? T.warn : (x + y) % 2 ? T.panel : T.raised);
   }
   for (const o of z.objects) {
-    cell(o.x, o.y, "#5b4f7a", 4);
-    cx.fillStyle = "#e8e6f0"; cx.font = "12px system-ui"; cx.textAlign = "center"; cx.textBaseline = "middle";
+    cell(o.x, o.y, T.accent2, Math.max(2, Math.round(C * 0.12)));
+    cx.fillStyle = T.bg; cx.font = `${Math.max(7, Math.round(C * 0.34))}px ` + cssVar("--font");
+    cx.textAlign = "center"; cx.textBaseline = "middle";
     cx.fillText(o.name.replace(/^the /, "")[0].toUpperCase(), o.x * C + C / 2, o.y * C + C / 2);
   }
-  for (const n of S.npcs) token(n.x, n.y, "#f0a45b", n.name[0]);
-  token(S.niko.x, S.niko.y, "#c9b8ff", "N");
+  for (const n of S.npcs) token(n.x, n.y, T.warn, n.name[0]);
+  token(S.niko.x, S.niko.y, T.accent, "N");
 }
 
+// ---- Rendering ----
 function render() {
-  if (S.phase === "fall") { drawSky(); $("hud").textContent = `Falling · ${S.fall.altitude}`; }
-  else {
-    drawMap();
-    $("hud").textContent = `${S.zone.name} · turn ${S.tick} · Ether ${S.niko.ether}/${S.niko.ether_max}`;
+  if (!S) return;
+  $("clock").textContent = S.phase === "fall"
+    ? `FALL \u00b7 ${S.fall.beat}/${S.fall.beats}`
+    : `T:${pad(S.tick)} \u00b7 ${S.zone.name}`;
+  if (S.phase === "fall") { drawSky(); $("map-hint").textContent = S.fall.altitude; }
+  else { drawMap(); $("map-hint").textContent = S.room || S.zone.name; }
+  renderLog();
+  renderStatus();
+  renderOptions();
+}
+
+function clearReveal() { clearInterval(revealTimer); revealTimer = null; }
+
+function renderLog() {
+  clearReveal();
+  const el = $("log"), entries = S.log || [];
+  const lastText = entries.length ? entries[entries.length - 1].text : null;
+  const animate = !reduced && lastText && lastText !== revealedText;
+  el.innerHTML = entries.map((r, i) => {
+    const isLast = i === entries.length - 1;
+    const text = (animate && isLast) ? "" : esc(r.text);
+    return `<p class="log-line"><span class="ts">T${pad(r.tick)}</span> <span class="tx">${text}</span></p>`;
+  }).join("");
+  el.scrollTop = el.scrollHeight;
+  revealedText = lastText;
+  if (animate) startReveal(lastText);
+}
+function startReveal(full) {
+  const el = $("log").querySelector(".log-line:last-child .tx");
+  if (!el) return;
+  let i = 0;
+  revealTimer = setInterval(() => {
+    i += 3; // ~120 chars/s
+    el.textContent = full.slice(0, i);
+    $("log").scrollTop = $("log").scrollHeight;
+    if (i >= full.length) clearReveal();
+  }, 25);
+}
+function finishReveal() {
+  if (!revealTimer) return;
+  clearReveal();
+  const el = $("log").querySelector(".log-line:last-child .tx");
+  if (el) el.textContent = revealedText || "";
+}
+
+function renderStatus() {
+  const el = $("status");
+  const rows = [];
+  rows.push(`<div class="stat-name">@ Niko</div>`);
+  rows.push(`<div class="stat-row"><span class="k">Mana</span><span class="bar mana">${bar(S.niko.ether, S.niko.ether_max)}</span><span class="v">${S.niko.ether}/${S.niko.ether_max}</span></div>`);
+  rows.push(`<div class="stat-row"><span class="k">Zone</span><span class="v">${esc(S.zone.name)}</span></div>`);
+  if (S.room) rows.push(`<div class="stat-row"><span class="k">Room</span><span class="v">${esc(S.room)}</span></div>`);
+  rows.push(`<div class="stat-row"><span class="k">Pos</span><span class="v">${S.niko.x},${S.niko.y}</span></div>`);
+  el.innerHTML = rows.join("");
+  $("nearby").innerHTML = S.npcs.length
+    ? S.npcs.map((n) => `<div class="near">\u25b8 ${esc(n.name)}</div>`).join("")
+    : `<div class="near dim">\u00b7 no one in sight</div>`;
+}
+
+function renderOptions() {
+  selected = 0;
+  const el = $("options");
+  el.innerHTML = "";
+  const fall = S.phase === "fall";
+  if (fall) {
+    const p = document.createElement("div");
+    p.className = "fall-prompt";
+    p.textContent = "What does Niko do?";
+    el.appendChild(p);
+  } else {
+    (S.options || []).forEach((o, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "option" + (i === selected ? " selected" : "");
+      b.disabled = busy;
+      b.innerHTML = `<span class="num">${i + 1}</span><span class="mark">\u25b8</span><span class="lbl">${esc(o.text)}</span>`;
+      b.onclick = () => { selected = i; markSelected(); act(o.action); };
+      b.onmouseenter = () => { selected = i; markSelected(); };
+      el.appendChild(b);
+    });
+    if (!el.children.length) el.innerHTML = `<div class="dim">No actions available.</div>`;
   }
-  $("log").innerHTML = S.log.map((r) =>
-    `<p><span class="t">turn ${r.tick}</span><br>${r.text.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</p>`).join("");
-  $("log").scrollTop = $("log").scrollHeight;
-  $("options").innerHTML = "";
-  S.options.forEach((o, i) => {
-    const b = document.createElement("button");
-    b.textContent = `${i + 1}. ${o.text}`;
-    b.onclick = () => act(o.action);
-    $("options").appendChild(b);
+  // Free text is always available: the engine maps it to an action or answers it as narration.
+  const row = document.createElement("div");
+  row.className = "fall-row";
+  row.innerHTML = `<input id="free-input" type="text" maxlength="500" spellcheck="false"
+      placeholder="${fall ? "e.g. spread my arms and steer toward the rooftops"
+                        : "Or type what Niko does: go north, talk to Marta, wait\u2026"}">
+    <button class="btn" id="free-go" type="button">Do it</button>`;
+  el.appendChild(row);
+  const inp = $("free-input");
+  $("free-go").onclick = submitFree;
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); submitFree(); }
+    else if (e.key === "Escape") { e.preventDefault(); inp.blur(); }
+  });
+  if (busy) { inp.disabled = true; $("free-go").disabled = true; }
+  // Only steal focus while falling; in play the arrows still move Niko.
+  if (fall && document.activeElement !== inp && document.activeElement.id !== "cmd") inp.focus();
+}
+function markSelected() {
+  [...$("options").children].forEach((b, i) => b.classList.toggle("selected", i === selected));
+}
+function confirmSelected() {
+  if (S && S.options && S.options[selected]) act(S.options[selected].action);
+}
+function submitFree() {
+  const inp = $("free-input");
+  const text = (inp && inp.value || "").trim();
+  if (!text) { setError("Say what Niko does."); return; }
+  if (inp) inp.value = "";
+  act(S.phase === "fall" ? { type: "fall", text } : { type: "free", text });
+}
+
+// ---- Command line ----
+function runCommand(raw) {
+  const cmd = raw.trim();
+  if (!cmd) return;
+  hist.push(cmd); histIdx = hist.length;
+  const h = cmd.split(/\s+/)[0].toLowerCase();
+  if (h === "help" || h === "?") return openHelp();
+  if (h === "reset" || h === "restart") return openConfirm();
+  // While falling, the command line is free text for the opening.
+  if (S.phase === "fall") return act({ type: "fall", text: cmd });
+  // Choosing one of the narrated options still works by number; anything else is free text and the
+  // engine maps it to an action (north, wait, talk to Marta...) or answers it as narration.
+  if (/^[1-3]$/.test(h) && S.options[+h - 1]) return act(S.options[+h - 1].action);
+  return act({ type: "free", text: cmd });
+}
+
+// ---- Focus and panels ----
+function focusPanel(id) {
+  document.querySelectorAll(".panel").forEach((p) => p.classList.remove("focused"));
+  const p = $("panel-" + id);
+  if (p) { p.classList.add("focused"); p.focus({ preventScroll: true }); }
+}
+function blurPanel() { document.querySelectorAll(".panel").forEach((p) => p.classList.remove("focused")); }
+function cycleFocus(delta) {
+  const vis = FOCUSABLE.filter((id) => { const p = $("panel-" + id); return p && p.offsetParent !== null; });
+  if (!vis.length) return;
+  let cur = vis.findIndex((id) => $("panel-" + id).classList.contains("focused"));
+  if (cur < 0) cur = delta > 0 ? -1 : 0;
+  focusPanel(vis[(cur + delta + vis.length) % vis.length]);
+}
+function setTab(tab) {
+  document.body.dataset.tab = tab;
+  syncTabs();
+}
+function syncTabs() {
+  const view = document.body.dataset.view || "game";
+  document.querySelectorAll("#tabbar .tab").forEach((b) => {
+    const on = view === "debug" ? b.dataset.tab === "debug" : b.dataset.tab === document.body.dataset.tab;
+    b.setAttribute("aria-selected", String(on));
   });
 }
+function normalizeTab() {
+  if (matchMedia("(min-width: 700px) and (max-width: 1099px)").matches &&
+      !["map", "status"].includes(document.body.dataset.tab)) setTab("status");
+}
 
-const KEYS = { ArrowUp: "N", w: "N", ArrowDown: "S", s: "S", ArrowRight: "E", d: "E", ArrowLeft: "W", a: "W" };
-addEventListener("keydown", (e) => {
-  if (!S) return;
-  if (KEYS[e.key]) { e.preventDefault(); act({ type: "move", dir: KEYS[e.key] }); }
-  else if (e.key === " ") { e.preventDefault(); act({ type: "wait" }); }
-  else if (/^[1-3]$/.test(e.key) && S.options[e.key - 1]) act(S.options[e.key - 1].action);
+// ---- Debug view: a read-only tab apart from the game, fed by /api/debug. ----
+async function loadDebug() {
+  try { D = await (await fetch("/api/debug")).json(); renderDebug(); }
+  catch { $("debug-body").innerHTML = '<p class="dimline">Could not load debug data.</p>'; }
+}
+function setView(view) {
+  document.body.dataset.view = view;
+  document.querySelectorAll("#views .tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
+  syncTabs();
+  if (view === "debug") loadDebug();
+}
+function renderDebug() {
+  setDebugTab(debugTab, false);
+  if (debugTab === "prompts") renderPrompts();
+  else renderOverview();
+}
+function setDebugTab(tab, rerender = true) {
+  debugTab = tab;
+  document.querySelectorAll("#debug-tabs .tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.dtab === tab)));
+  if (rerender) renderDebug();
+}
+function renderOverview() {
+  if (!D) return;
+  const fmt = (d) => (typeof d === "string" ? d : JSON.stringify(d));
+  const out = [];
+  out.push("<h3>[ CORE ]</h3>");
+  out.push(`<div class="kv">
+    <span>tick</span><span class="acc">${D.tick}</span>
+    <span>phase</span><span>${esc(D.phase)}</span>
+    <span>seed</span><span>${D.seed}</span>
+    <span>started</span><span>${D.started ?? "\u2014"}</span>
+    <span>zone</span><span>${esc(D.zone.id)} ${D.zone.width}x${D.zone.height}</span>
+    <span>niko</span><span>${D.niko ? `(${D.niko.x},${D.niko.y}) ether ${D.niko.ether}/${D.niko.ether_max}` : "?"}</span>
+  </div>`);
+  out.push("<h3>[ COUNTS ]</h3>");
+  out.push("<pre>" + Object.entries(D.counts || {}).map(([k, v]) => `${k}=${v}`).join("  ") + "</pre>");
+  out.push("<h3>[ SETTINGS ]</h3>");
+  out.push("<pre>" + (D.settings || []).map((s) => `${esc(s.key)} = ${esc(s.value)}`).join("\n") + "</pre>");
+  out.push("<h3>[ ENTITIES ]</h3>");
+  out.push("<pre>" + (D.entities || []).map((e) =>
+    `${e.id} ${e.type} "${e.name}" @(${e.x},${e.y}) ${esc(fmt(e.data))}`).join("\n") + "</pre>");
+  out.push("<h3>[ EVENTS ] (newest 40)</h3>");
+  out.push("<pre>" + (D.events || []).map((e) =>
+    `#${e.id} T${e.tick} ${e.type} @(${e.x},${e.y}) actor=${e.actor_id ?? "-"} seen=[${(e.witnesses || []).join(",")}] ${esc(fmt(e.data))}`).join("\n") + "</pre>");
+  out.push("<h3>[ MEMORIES ] (newest 40)</h3>");
+  out.push("<pre>" + (D.memories || []).map((m) =>
+    `#${m.id} T${m.tick} ${m.character_id} [imp ${m.importance}] ev${m.event_id} ${esc(m.text)}`).join("\n") + "</pre>");
+  out.push("<h3>[ LLM CALLS ] (newest 10)</h3>");
+  out.push("<pre>" + ((D.llm_calls || []).length
+    ? D.llm_calls.map((c) => `#${c.id} T${c.tick} ${esc(c.model)} in=${c.tokens_input ?? "-"} out=${c.tokens_output ?? "-"} cost=${c.cost ?? "-"}`).join("\n")
+    : "(none)") + "</pre>");
+  out.push(`<details><summary class="dimline">raw payload</summary><pre>${esc(JSON.stringify(D, null, 2))}</pre></details>`);
+  $("debug-body").innerHTML = out.join("");
+}
+function renderPrompts() {
+  if (!D) return;
+  const p = D.prompts || {};
+  const out = [];
+  out.push("<h3>[ CONFIG ]</h3>");
+  out.push(`<div class="kv">
+    <span>language</span><span>${esc(p.language ?? "-")}</span>
+    <span>model</span><span>${esc(p.model ?? "offline")}</span>
+    <span>reasoning</span><span>${p.reasoning ? "on" : "off"}</span>
+  </div>`);
+  out.push("<h3>[ EDIT ]</h3>");
+  out.push(`<div class="dimline">Edits apply to the next LLM call. Empty a field to restore its default. Keep the JSON contract
+    (<code>{"narration": ..., "options": [...]}</code>) or the narrator falls back to offline.</div>`);
+  out.push(`<label class="field">system prompt ${p.systemCustom ? '<span class="warn">custom</span>' : '<span class="dimline">default</span>'}
+    <textarea id="prompt-system" rows="9" spellcheck="false">${esc(p.system ?? "")}</textarea></label>`);
+  out.push(`<label class="field">retry hint ${p.retryCustom ? '<span class="warn">custom</span>' : '<span class="dimline">default</span>'}
+    <textarea id="prompt-retry" rows="3" spellcheck="false">${esc(p.retry ?? "")}</textarea></label>`);
+  out.push(`<div class="prompt-actions">
+    <button class="btn" id="prompt-save" type="button">Save prompts</button>
+    <button class="btn" id="prompt-reset" type="button">Reset to defaults</button>
+    <span id="prompt-status" class="dimline"></span></div>`);
+  const calls = D.llm_calls || [];
+  out.push(`<h3>[ PROMPTS USED ] (newest ${calls.length})</h3>`);
+  if (!calls.length) out.push('<div class="dimline">No LLM calls yet (offline narrator, or no narrated turn). The templates above are what an LLM narrator would send.</div>');
+  for (const c of calls) {
+    let msgs = c.request;
+    try { msgs = JSON.parse(c.request); } catch { /* keep raw */ }
+    const body = Array.isArray(msgs)
+      ? msgs.map((m) => `<span class="acc">[${esc(m.role)}]</span>\n${esc(m.content)}`).join("\n\n")
+      : esc(String(c.request ?? ""));
+    out.push(`<details><summary>#${c.id} T${c.tick} ${esc(c.model ?? "")} \u00b7 in ${c.tokens_input ?? "-"} / out ${c.tokens_output ?? "-"} \u00b7 cost ${c.cost ?? "-"}</summary>
+      <h3>request</h3><pre>${body}</pre>
+      <h3>response</h3><pre>${esc(c.response ?? "")}</pre></details>`);
+  }
+  $("debug-body").innerHTML = out.join("");
+  $("prompt-save").onclick = () => savePrompts(false);
+  $("prompt-reset").onclick = () => savePrompts(true);
+}
+async function savePrompts(reset) {
+  const status = $("prompt-status");
+  const body = reset
+    ? { system: "", retry: "" }
+    : { system: $("prompt-system").value, retry: $("prompt-retry").value };
+  status.textContent = "saving\u2026";
+  try {
+    const r = await (await fetch("/api/prompts", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    })).json();
+    if (!r.ok) { status.textContent = r.error || "Could not save."; return; }
+    D.prompts = r.prompts;
+    toast(reset ? "Prompts reset to defaults." : "Prompts saved.");
+    renderPrompts();
+  } catch { status.textContent = "Network error."; }
+}
+
+function openHelp() { $("help").hidden = false; $("help-close").focus(); }
+function closeHelp() { $("help").hidden = true; }
+function openConfirm() { $("confirm").hidden = false; $("confirm-ok").focus(); }
+function closeConfirm() { $("confirm").hidden = true; }
+
+// ---- Wiring ----
+$("views").addEventListener("click", (e) => {
+  const b = e.target.closest(".tab");
+  if (b) setView(b.dataset.view);
+});
+$("tabbar").addEventListener("click", (e) => {
+  const b = e.target.closest(".tab");
+  if (!b) return;
+  if (b.dataset.tab === "debug") setView("debug");
+  else { setView("game"); setTab(b.dataset.tab); }
+});
+$("debug-refresh").onclick = loadDebug;
+$("debug-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest(".tab");
+  if (b) setDebugTab(b.dataset.dtab);
+});
+$("cmdline").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("cmd").value; $("cmd").value = "";
+  runCommand(v);
+});
+$("reset-btn").onclick = openConfirm;
+$("confirm-cancel").onclick = closeConfirm;
+$("confirm-ok").onclick = () => { closeConfirm(); resetGame(); };
+$("help-close").onclick = closeHelp;
+$("help").addEventListener("click", (e) => { if (e.target === $("help")) closeHelp(); });
+$("confirm").addEventListener("click", (e) => { if (e.target === $("confirm")) closeConfirm(); });
+document.querySelectorAll(".panel-head").forEach((h) => {
+  const toggle = () => h.parentElement.classList.toggle("collapsed");
+  h.addEventListener("click", (e) => { if (e.target.closest("button")) return; toggle(); });
+  h.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.target.closest("button")) { e.preventDefault(); toggle(); } });
+});
+document.querySelectorAll(".panel").forEach((p) => {
+  p.addEventListener("mousedown", () => focusPanel(p.id.replace("panel-", "")));
 });
 
+addEventListener("keydown", (e) => {
+  if (!$("help").hidden) {
+    if (e.key === "Escape" || e.key === "?" || e.key === "F1") { e.preventDefault(); closeHelp(); }
+    return;
+  }
+  if (!$("confirm").hidden) {
+    if (e.key === "Escape") { e.preventDefault(); closeConfirm(); }
+    else if (e.key === "Enter") { e.preventDefault(); closeConfirm(); resetGame(); }
+    return;
+  }
+  // F2 toggles the debug tab. While it is open, only leaving it is handled here.
+  if (document.body.dataset.view === "debug") {
+    if (e.key === "Escape" || e.key === "F2") { e.preventDefault(); setView("game"); }
+    return;
+  }
+  if (e.key === "F2") { e.preventDefault(); setView("debug"); return; }
+  finishReveal();
+
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {
+    if (e.target.id === "cmd") {
+      if (e.key === "Escape") { e.preventDefault(); $("cmd").blur(); }
+      else if (e.key === "ArrowUp" && hist.length) { e.preventDefault(); histIdx = Math.max(0, histIdx - 1); $("cmd").value = hist[histIdx] ?? ""; }
+      else if (e.key === "ArrowDown" && hist.length) { e.preventDefault(); histIdx = Math.min(hist.length, histIdx + 1); $("cmd").value = hist[histIdx] ?? ""; }
+    }
+    return;
+  }
+  if (!S) return;
+  // While falling, the opening is free text: no game keys, only "/" to reach the command line.
+  if (S.phase === "fall") {
+    if (e.key === "/") { e.preventDefault(); $("cmd").focus(); }
+    return;
+  }
+
+  if (gPending) {
+    gPending = false;
+    const dest = { m: "map", l: "log", s: "status", i: "status" }[e.key.toLowerCase()];
+    if (dest) { e.preventDefault(); setTab(dest); focusPanel(dest); return; }
+  }
+  if (e.key === "g") { gPending = true; return; }
+
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const KEYS = { ArrowUp: "N", w: "N", ArrowDown: "S", s: "S", ArrowRight: "E", d: "E", ArrowLeft: "W", a: "W" };
+  if (KEYS[k]) { e.preventDefault(); act({ type: "move", dir: KEYS[k] }); }
+  else if (k === " ") { e.preventDefault(); act({ type: "wait" }); }
+  else if (/^[1-3]$/.test(k) && S.options[+k - 1]) { e.preventDefault(); selected = +k - 1; markSelected(); act(S.options[selected].action); }
+  else if (k === "/") { e.preventDefault(); $("cmd").focus(); }
+  else if (k === "?" || e.key === "F1") { e.preventDefault(); openHelp(); }
+  else if (e.key === "Escape") { e.preventDefault(); blurPanel(); }
+  else if (e.key === "Tab") { e.preventDefault(); cycleFocus(e.shiftKey ? -1 : 1); }
+  else if (e.key === "Enter") { e.preventDefault(); confirmSelected(); }
+});
+
+addEventListener("resize", normalizeTab);
+normalizeTab();
+setView("game");
 load();
 </script>
 </body>

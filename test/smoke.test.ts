@@ -31,15 +31,118 @@ test("Niko does not walk through walls and an invalid move does not spend a turn
   assert.equal(engine.state().tick, before.tick);
 });
 
-test("the exit door does not let you through: the neighboring zone does not exist yet", async () => {
+test("the south door leads outside and back, coherent with the 1 m grid", async () => {
   const { engine, db } = create();
   await engine.start();
-  db.prepare("UPDATE entities SET x = 5, y = 13 WHERE id = 'niko'").run(); // right in front of the door
-  const before = engine.state().tick;
+  db.prepare("UPDATE entities SET x = 5, y = 13 WHERE id = 'niko'").run(); // just inside the front door
+  const r = await engine.takeTurn({ type: "move", dir: "S" });
+  assert.equal(r.ok, true);
+  assert.equal(engine.zone.id, "outdoor");
+  const out = engine.state();
+  assert.equal(out.zoneId, "outdoor");
+  assert.deepEqual([out.niko.x, out.niko.y], [20, 36]); // the tile just outside the front door
+  // and back in: the entry tile is derived from the reciprocal door, not stored twice
+  const back = await engine.takeTurn({ type: "move", dir: "N" });
+  assert.equal(back.ok, true);
+  assert.equal(engine.zone.id, "house_001");
+  assert.deepEqual([engine.state().niko.x, engine.state().niko.y], [5, 13]);
+});
+
+test("walking into a building generates it deterministically and lets Niko explore and leave", async () => {
+  const { engine, db } = create();
+  await engine.start();
+  db.prepare("UPDATE entities SET zone_id = 'outdoor', x = 6, y = 9 WHERE id = 'niko'").run(); // at the bakery door
+  const r = await engine.takeTurn({ type: "move", dir: "N" });
+  assert.equal(r.ok, true);
+  assert.equal(engine.zone.id, "building_bakery");
+  assert.equal(engine.zone.kind, "building");
+  assert.deepEqual([engine.state().niko.x, engine.state().niko.y], [5, 7]); // inside, on the entry tile
+  // the interior is persisted so it survives a restart
+  const rows = db.prepare("SELECT id FROM zones WHERE id = 'building_bakery'").all() as { id: string }[];
+  assert.deepEqual(rows.map((x) => x.id), ["building_bakery"]);
+  // walk one tile east and back, then leave through the door
+  assert.equal((await engine.takeTurn({ type: "move", dir: "E" })).ok, true);
+  assert.equal((await engine.takeTurn({ type: "move", dir: "W" })).ok, true);
+  const out = await engine.takeTurn({ type: "move", dir: "S" });
+  assert.equal(out.ok, true);
+  assert.equal(engine.zone.id, "outdoor");
+  assert.deepEqual([engine.state().niko.x, engine.state().niko.y], [6, 9]);
+});
+
+test("a door with no portal is sealed", async () => {
+  const { engine, db } = create();
+  await engine.start();
+  db.prepare("UPDATE entities SET x = 5, y = 13 WHERE id = 'niko'").run();
+  engine.zone.portals.length = 0; // the 'D' tile now has nothing behind it
   const r = await engine.takeTurn({ type: "move", dir: "S" });
   assert.equal(r.ok, false);
-  assert.match(r.error ?? "", /door/);
-  assert.equal(engine.state().tick, before);
+  assert.match(r.error ?? "", /sealed/);
+});
+
+test("an invalid architect draft is discarded for the deterministic building", async () => {
+  const bad: Narrator = {
+    async narrate() { return { text: "ok", options: [] }; },
+    async generateZone() { return { map: ["###", "#.#", "###"] }; }, // wrong size, no door
+  };
+  const { engine, db } = create(":memory:", 1337, bad);
+  await engine.start();
+  db.prepare("UPDATE entities SET zone_id = 'outdoor', x = 6, y = 9 WHERE id = 'niko'").run();
+  assert.equal((await engine.takeTurn({ type: "move", dir: "N" })).ok, true);
+  const z = engine.zone;
+  assert.equal(z.width, 11);
+  assert.equal(z.height, 9);
+  assert.equal(z.map[8][5], "D"); // the engine stamped its own exit
+});
+
+test("a valid architect draft is used, keeping the exit and entry walkable", async () => {
+  const good: Narrator = {
+    async narrate() { return { text: "ok", options: [] }; },
+    async generateZone() {
+      const map = ["###########"];
+      for (let y = 1; y < 8; y++) map.push("#.........#");
+      map.push("###########");
+      map[8] = "###########";
+      return { name: "the tea house", map };
+    },
+  };
+  const { engine, db } = create(":memory:", 1337, good);
+  await engine.start();
+  db.prepare("UPDATE entities SET zone_id = 'outdoor', x = 6, y = 9 WHERE id = 'niko'").run();
+  assert.equal((await engine.takeTurn({ type: "move", dir: "N" })).ok, true);
+  assert.equal(engine.zone.name, "the tea house");
+  assert.equal(engine.zone.map[8][5], "D");
+});
+
+test("free text is mapped to real actions and otherwise answered by the narrator", async () => {
+  const { engine, db } = create();
+  await engine.start();
+  const start = engine.state().niko;
+  assert.equal((await engine.takeTurn({ type: "free", text: "go north" })).ok, true);
+  assert.equal(engine.state().niko.y, start.y - 1);
+  const tick = engine.state().tick;
+  assert.equal((await engine.takeTurn({ type: "free", text: "do a backflip" })).ok, true);
+  assert.equal(engine.state().tick, tick + 1); // an unmapped line still advances the world
+  const says = (db.prepare("SELECT COUNT(*) c FROM events WHERE type = 'say'").get() as { c: number }).c;
+  assert.equal(says, 1);
+});
+
+test("free text can start a conversation with a nearby NPC", async () => {
+  const { engine, db } = create();
+  db.prepare("UPDATE entities SET x = 5, y = 2 WHERE id = 'niko'").run(); // next to Marta at (6,2)
+  await engine.start();
+  assert.equal((await engine.takeTurn({ type: "free", text: "talk to Marta" })).ok, true);
+  const open = (db.prepare("SELECT COUNT(*) c FROM conversations WHERE status = 'open'").get() as { c: number }).c;
+  assert.equal(open, 1);
+});
+
+test("options never cross zones", async () => {
+  const { engine, db } = create();
+  await engine.start();
+  db.prepare("UPDATE entities SET x = 5, y = 6 WHERE id = 'ivy'").run(); // in the house, near the bakery entry coords
+  db.prepare("UPDATE entities SET zone_id = 'outdoor', x = 6, y = 9 WHERE id = 'niko'").run();
+  assert.equal((await engine.takeTurn({ type: "move", dir: "N" })).ok, true); // into the bakery, Niko at (5,7)
+  const texts = engine.state().options.map((o) => o.text);
+  assert.ok(!texts.some((t) => t.includes("Ivy")), JSON.stringify(texts));
 });
 
 test("perception respects walls", () => {
@@ -125,7 +228,7 @@ test("the stakes migration applies on a database from the previous version", () 
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3]);
+  assert.deepEqual(migrations, [1, 2, 3, 4]);
   const tables = (db2.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
     .map((r) => r.name);
   for (const t of ["agenda_state", "conversations", "facts_known"]) assert.ok(tables.includes(t));

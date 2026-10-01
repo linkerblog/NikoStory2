@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGame } from "../src/game.js";
-import { canSee, type Action, type Engine, type FallChoice } from "../src/engine.js";
+import { canSee, fallIntent, type Action, type Engine } from "../src/engine.js";
 import type { Db } from "../src/db.js";
 import { OfflineNarrator, hasTileCount } from "../src/narrator.js";
 import { loadOpening, loadZone } from "../src/world.js";
@@ -15,25 +15,37 @@ const DATA = fileURLToPath(new URL("../data", import.meta.url));
 const create = (path = ":memory:", seed = 1337) =>
   createGame(path, DATA, seed, () => new OfflineNarrator());
 
-const fall = (choice: FallChoice): Action => ({ type: "fall", choice });
+const fall = (text: string): Action => ({ type: "fall", text });
+const STEER = "spread my arms and steer toward the houses";
+const BRACE = "brace for the impact";
+const LET_GO = "let go and fall";
 const meta = (db: Db, key: string) =>
   (db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined)?.value;
 const count = (db: Db, table: string) =>
   (db.prepare(`SELECT COUNT(*) c FROM ${table}`).get() as { c: number }).c;
-const playFall = async (engine: Engine, choices: FallChoice[]) => {
-  for (const choice of choices) assert.equal((await engine.takeTurn(fall(choice))).ok, true);
+const playFall = async (engine: Engine, texts: string[]) => {
+  for (const text of texts) assert.equal((await engine.takeTurn(fall(text))).ok, true);
 };
 
-test("a new game opens in the fall, tick 0, with only fall actions", async () => {
+test("a new game opens in the fall, tick 0, with free text and no fixed options", async () => {
   const { engine } = create();
   await engine.start();
   const s = engine.state();
   assert.equal(s.phase, "fall");
   assert.equal(s.tick, 0);
-  assert.ok(s.options.length >= 2);
-  assert.ok(s.options.every((o) => o.action.type === "fall"));
+  assert.equal(s.options.length, 0); // free text: the engine offers no options
   assert.equal(s.fall?.beats, 3);
   assert.equal(hasTileCount(s.log[0].text), false); // "high above the clouds", no numbers
+});
+
+test("an empty fall action is rejected and changes nothing", async () => {
+  const { engine, db } = create();
+  await engine.start();
+  const beat = meta(db, "fall_beat");
+  const r = await engine.takeTurn(fall("   "));
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /what Niko does/i);
+  assert.equal(meta(db, "fall_beat"), beat);
 });
 
 test("non-fall actions during the fall are rejected and change nothing", async () => {
@@ -50,30 +62,31 @@ test("non-fall actions during the fall are rejected and change nothing", async (
   assert.equal(count(db, "memories"), memories);
 });
 
-test("brace needs its Ether, is rejected if forced and spends exactly its cost", async () => {
+test("a brace spends its Ether only when there is enough, the text only proposes", async () => {
   const { engine, db } = create();
-  await engine.start();
-  const braced = (s: ReturnType<Engine["state"]>) =>
-    s.options.some((o) => o.action.type === "fall" && o.action.choice === "brace");
-  assert.ok(braced(engine.state())); // starts with 3 Ether, the cost is 2
-
-  await engine.takeTurn(fall("brace"));
+  await engine.start(); // 3 Ether, the brace costs 2
+  await engine.takeTurn(fall(BRACE));
   assert.equal(engine.state().niko.ether, 1); // 3 - 2, no regen during the fall
 
-  assert.ok(!braced(engine.state())); // now below cost: hidden
   const beat = meta(db, "fall_beat");
-  const r = await engine.takeTurn(fall("brace"));
-  assert.equal(r.ok, false);
-  assert.match(r.error ?? "", /Ether/);
-  assert.equal(engine.state().niko.ether, 1);
-  assert.equal(meta(db, "fall_beat"), beat); // a rejected brace does not advance the beat
+  const r = await engine.takeTurn(fall(BRACE)); // only 1 Ether left: the brace simply fails
+  assert.equal(r.ok, true);
+  assert.equal(engine.state().niko.ether, 1); // no spend
+  assert.equal(meta(db, "fall_beat"), String(Number(beat) + 1)); // the turn still advances
+});
+
+test("fallIntent reads steer and brace from free text", () => {
+  assert.deepEqual(fallIntent("steer toward the rooftops"), { steer: true, brace: false });
+  assert.deepEqual(fallIntent("brace for the impact"), { steer: false, brace: true });
+  assert.deepEqual(fallIntent("let go and fall"), { steer: false, brace: false });
+  assert.deepEqual(fallIntent("brace and steer over the houses"), { steer: true, brace: true });
 });
 
 test("the same seed and choices land on the same tile; steer lands in the configured room", async () => {
   const a = create(":memory:", 42), b = create(":memory:", 42);
   for (const g of [a, b]) {
     await g.engine.start();
-    await playFall(g.engine, ["steer", "brace", "steer"]);
+    await playFall(g.engine, [STEER, BRACE, STEER]);
   }
   assert.deepEqual(a.engine.positions(), b.engine.positions());
   const s = a.engine.state();
@@ -84,9 +97,9 @@ test("the same seed and choices land on the same tile; steer lands in the config
 test("the landing is recorded once, with witnesses and importance-9 memories", async () => {
   const { engine, db } = create();
   await engine.start();
-  await playFall(engine, ["steer", "brace"]);
+  await playFall(engine, [STEER, BRACE]);
   const before = engine.positions(); // NPCs still at their start: the fall does not advance the world
-  await engine.takeTurn(fall("let_go"));
+  await engine.takeTurn(fall(LET_GO));
   const landing = engine.positions().niko;
 
   const events = db.prepare("SELECT id, x, y, data FROM events WHERE type = 'arrives'").all() as
@@ -119,7 +132,7 @@ test("the landing is recorded once, with witnesses and importance-9 memories", a
 test("after landing the world is play, at tick 1, and the NPC agendas run", async () => {
   const { engine, db } = create();
   await engine.start();
-  await playFall(engine, ["steer", "brace", "let_go"]);
+  await playFall(engine, [STEER, BRACE, LET_GO]);
   const s = engine.state();
   assert.equal(s.phase, "play");
   assert.equal(s.tick, 1);
@@ -130,7 +143,7 @@ test("after landing the world is play, at tick 1, and the NPC agendas run", asyn
 test("a hard landing zeroes the Ether that the landing step then regenerates", async () => {
   const { engine } = create();
   await engine.start();
-  await playFall(engine, ["steer", "let_go", "steer"]); // never braces: hard impact
+  await playFall(engine, [STEER, LET_GO, STEER]); // never braces: hard impact
   assert.equal(engine.state().niko.ether, 1); // 0 at impact, +1 regen for the landing tick
 });
 
@@ -139,7 +152,7 @@ test("a save without a phase (v0.2.0) behaves as play", async () => {
   const raw = () => createGame(path, DATA, 1337, () => new OfflineNarrator());
   const g1 = raw();
   await g1.engine.start();
-  await playFall(g1.engine, ["steer", "brace", "steer"]);
+  await playFall(g1.engine, [STEER, BRACE, STEER]);
   g1.db.prepare("DELETE FROM settings WHERE key = 'phase'").run();
   g1.db.close();
 

@@ -1,16 +1,28 @@
 import { getMeta, setMeta, type Db } from "./db.js";
 import { rngFor } from "./rng.js";
 import {
-  roomAt, DEFAULT_OPENING, DEFAULT_WORLD, type Ent, type Opening, type WorldFacts, type Zone,
+  roomAt, DEFAULT_OPENING, DEFAULT_WORLD, type Ent, type Opening, type Portal, type WorldFacts, type Zone,
 } from "./world.js";
-import type { ArrivalContext, Narrator, Option } from "./narrator.js";
+import { buildingSpec, generateBuilding, validateZoneDraft, type ZoneStore } from "./zones.js";
+import type { ArrivalContext, DeltaSink, Narrator, Option } from "./narrator.js";
 import { memoryFromEvent, type MemoryEvent, type MemoryRules, DEFAULT_MEMORY_RULES } from "./memory.js";
 import { bfsStep, deltaDir, goalPoint, reached, type Agenda } from "./agenda.js";
 import { DEFAULT_STAKES_RULES, chebyshev, directionWord, proximityLabel, type Scene, type StakesRules } from "./stakes.js";
 
 export type Dir = "N" | "S" | "E" | "W";
 export type ReplyChoice = "ask" | "reassure" | "press";
-export type FallChoice = "steer" | "brace" | "let_go";
+export interface FallIntent { steer: boolean; brace: boolean }
+// The opening is free text: the player writes what Niko does and this deterministic scan turns it
+// into the physics the engine applies, so neither a model nor a client can bypass the outcome.
+const BRACE_WORDS = ["brace", "resist", "absorb", "cushion", "tuck", "roll", "endure", "shield", "guard", "take the hit", "soften", "break the fall"];
+const STEER_WORDS = ["steer", "aim", "glide", "angle", "direct", "guide", "toward", "towards", "head for", "dive", "slant", "lean", "reach the"];
+export function fallIntent(text: string): FallIntent {
+  const t = text.toLowerCase();
+  return {
+    brace: BRACE_WORDS.some((w) => t.includes(w)),
+    steer: STEER_WORDS.some((w) => t.includes(w)),
+  };
+}
 export type Action =
   | { type: "move"; dir: Dir }
   | { type: "wait" }
@@ -18,7 +30,8 @@ export type Action =
   | { type: "reply"; target: string; choice: ReplyChoice }
   | { type: "leave"; target: string }
   | { type: "examine"; target: string }
-  | { type: "fall"; choice: FallChoice };
+  | { type: "fall"; text: string }
+  | { type: "free"; text: string };
 export interface AvailableAction { id: string; label: string; action: Action }
 
 interface Conversation {
@@ -28,7 +41,46 @@ interface Conversation {
 const DIR: Record<Dir, [number, number]> = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] };
 const DIR_WORD: Record<Dir, string> = { N: "north", S: "south", E: "east", W: "west" };
 export const VISION_RANGE = 8;
-const MSG_DOOR = "The door leads to a zone that does not exist yet (zone generation will go here).";
+const MSG_DOOR = "That door is sealed.";
+
+// The free-text action is the whole point of the terminal UI: the player writes anything and the
+// engine either maps it to a real action or records it as a line the narrator answers. It is pure and
+// deterministic, so the offline narrator and the tests get the same behaviour as the LLM.
+const FREE_DIR: Record<string, Dir> = {
+  n: "N", north: "N", up: "N", forward: "N", forwards: "N",
+  s: "S", south: "S", down: "S", back: "S",
+  e: "E", east: "E", right: "E",
+  w: "W", west: "W", left: "W",
+};
+
+export function parseFreeAction(text: string, zone: Zone, ents: Ent[], convo: Conversation | undefined): Action | null {
+  const t = text.toLowerCase().trim().replace(/[.!?,;]+$/, "");
+  if (!t) return null;
+  const words = t.split(/\s+/);
+  const head = words[0];
+  if (convo) {
+    if (["leave", "exit", "stop", "end", "goodbye", "bye", "farewell"].includes(head)) return { type: "leave", target: convo.npc_id };
+    if (["reassure", "calm", "comfort", "soothe", "console"].includes(head)) return { type: "reply", target: convo.npc_id, choice: "reassure" };
+    if (["press", "demand", "insist", "push", "urge"].includes(head)) return { type: "reply", target: convo.npc_id, choice: "press" };
+    return { type: "reply", target: convo.npc_id, choice: "ask" };
+  }
+  const dir = FREE_DIR[head] ??
+    (["go", "walk", "head", "move", "run"].includes(head) ? FREE_DIR[words[1] ?? ""] : undefined);
+  if (dir) return { type: "move", dir };
+  if (["wait", "rest", "stay", "idle", "pause"].includes(head) && words.length <= 2) return { type: "wait" };
+  if (["talk", "speak", "chat", "greet", "address", "say"].includes(head)) {
+    const name = t.replace(/^(talk|speak|chat|greet|address|say)(\s+to|\s+with)?\s*/, "").trim();
+    const npc = ents.filter((e) => e.type === "npc" && e.zone_id === zone.id)
+      .find((e) => name && e.name.toLowerCase().includes(name.toLowerCase()));
+    if (npc) return { type: "talk", target: npc.id };
+  }
+  if (["examine", "inspect", "search", "check", "study", "look", "find", "open", "read"].includes(head)) {
+    const name = t.replace(/^(examine|inspect|search|check|study|look at|look|find|open|read)(\s+the|\s+at)?\s*/, "").trim();
+    const o = zone.objects.find((obj) => name && obj.name.toLowerCase().includes(name.toLowerCase()));
+    if (o) return { type: "examine", target: o.id };
+  }
+  return null;
+}
 
 type Point = { x: number; y: number };
 
@@ -56,10 +108,12 @@ const near = (a: Point, b: Point) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y 
 export class Engine {
   // Set when the opening lands; drives the one landing narration and then clears.
   private pendingImpact: "soft" | "hard" | null = null;
+  // The live sink for the turn in progress; turns are serialized, so one field is enough.
+  private onDelta: DeltaSink | undefined;
 
   constructor(
     private db: Db,
-    readonly zone: Zone,
+    private zones: ZoneStore,
     private narrator: Narrator,
     private rules: MemoryRules = DEFAULT_MEMORY_RULES,
     private stakes: StakesRules = DEFAULT_STAKES_RULES,
@@ -67,6 +121,15 @@ export class Engine {
     private opening: Opening = DEFAULT_OPENING,
     private world: WorldFacts = DEFAULT_WORLD,
   ) {}
+
+  // The zone Niko is in. Zones live in the store (and the database), so the engine can move between
+  // the house, the street and generated buildings without a single hard-coded map.
+  get zone(): Zone {
+    const id = this.ents().find((e) => e.id === "niko")!.zone_id;
+    const z = this.zones.get(id);
+    if (!z) throw new Error(`Niko is in unknown zone ${id}`);
+    return z;
+  }
 
   private tick(): number { return Number(getMeta(this.db, "tick")); }
   private seed(): number { return Number(getMeta(this.db, "seed")); }
@@ -78,18 +141,22 @@ export class Engine {
 
   private fallBeat(): number { return Number(getMeta(this.db, "fall_beat") ?? "0"); }
 
-  private fallLog(): FallChoice[] {
+  // The free text of each fall beat, oldest first. Legacy saves stored the old choice ids here and
+  // they still read back as text, so `fallIntent` gives them the same outcome.
+  private fallLog(): string[] {
     try {
       const v = JSON.parse(getMeta(this.db, "fall_log") ?? "[]");
-      return Array.isArray(v) ? v.filter((x): x is FallChoice => x === "steer" || x === "brace" || x === "let_go") : [];
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
     } catch {
       return [];
     }
   }
 
+  private fallBrace(): boolean { return getMeta(this.db, "fall_brace") === "1"; }
+
   private ents(): Ent[] {
     return (this.db.prepare("SELECT * FROM entities ORDER BY rowid").all() as any[]).map((r) => ({
-      id: r.id, type: r.type, name: r.name, x: r.x, y: r.y, data: JSON.parse(r.data),
+      id: r.id, type: r.type, name: r.name, zone_id: r.zone_id, x: r.x, y: r.y, data: JSON.parse(r.data),
     }));
   }
 
@@ -97,7 +164,7 @@ export class Engine {
     const z = this.zone;
     return x >= 0 && y >= 0 && x < z.width && y < z.height && z.map[y][x] === "." &&
       !z.objects.some((o) => o.blocks && o.x === x && o.y === y) &&
-      !ents.some((e) => e.x === x && e.y === y);
+      !ents.some((e) => e.zone_id === z.id && e.x === x && e.y === y);
   }
 
   private moveTo(e: Ent, x: number, y: number) {
@@ -105,22 +172,29 @@ export class Engine {
     this.db.prepare("UPDATE entities SET x = ?, y = ? WHERE id = ?").run(x, y, e.id);
   }
 
+  // Moving through a door: the entity changes zone, not just tile.
+  private setZone(e: Ent, zone: Zone, x: number, y: number): void {
+    e.zone_id = zone.id; e.x = x; e.y = y;
+    this.db.prepare("UPDATE entities SET zone_id = ?, x = ?, y = ? WHERE id = ?").run(zone.id, x, y, e.id);
+  }
+
   // The event is born with its witnesses: only those who could see it "know" it. The event, its
   // witnesses and one memory per witness commit together, so a memory can never outlive its event.
   private record(type: string, x: number, y: number, actor: string | null, data: object, withWitnesses: boolean): void {
     const tick = this.tick();
-    const ents = this.ents();
+    const z = this.zone;
+    const here = this.ents().filter((e) => e.zone_id === z.id);
     const names: Record<string, string> = {};
-    for (const e of ents) names[e.id] = e.name;
-    for (const o of this.zone.objects) names[o.id] = o.name;
+    for (const e of here) names[e.id] = e.name;
+    for (const o of z.objects) names[o.id] = o.name;
     const witnesses = withWitnesses
-      ? ents.filter((e) => canSee(this.zone, e, { x, y })).map((e) => e.id)
+      ? here.filter((e) => canSee(z, e, { x, y })).map((e) => e.id)
       : [];
-    const base: Omit<MemoryEvent, "id"> = { tick, zone_id: this.zone.id, type, actor_id: actor, x, y, data, names, witnesses };
+    const base: Omit<MemoryEvent, "id"> = { tick, zone_id: z.id, type, actor_id: actor, x, y, data, names, witnesses };
     this.db.transaction(() => {
       const id = Number(
         this.db.prepare("INSERT INTO events (tick, zone_id, type, actor_id, x, y, data) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .run(tick, this.zone.id, type, actor, x, y, JSON.stringify(data)).lastInsertRowid,
+          .run(tick, z.id, type, actor, x, y, JSON.stringify(data)).lastInsertRowid,
       );
       const insWitness = this.db.prepare("INSERT INTO witnesses (event_id, character_id) VALUES (?, ?)");
       for (const w of witnesses) insWitness.run(id, w);
@@ -133,6 +207,58 @@ export class Engine {
         insMemory.run(m.character_id, m.event_id, m.tick, m.zone_id, m.text, m.importance, JSON.stringify(m.participants));
       }
     })();
+  }
+
+  // Where a mover appears when entering `zone` from `fromId`: the walkable tile next to the zone's
+  // own portal back to `fromId`. This keeps the two doors of a link in agreement with no coordinates
+  // stored twice, so navigation is coherent at every scale (house <-> street <-> building).
+  private entryTile(zone: Zone, fromId: string, mover: Ent): Point {
+    const q = (zone.portals ?? []).find((p) => p.to === fromId);
+    const others = this.ents().filter((e) => e.zone_id === zone.id && e.id !== mover.id);
+    const freeAt = (x: number, y: number) =>
+      x >= 0 && y >= 0 && x < zone.width && y < zone.height && zone.map[y][x] === "." &&
+      !zone.objects.some((o) => o.blocks && o.x === x && o.y === y) &&
+      !others.some((e) => e.x === x && e.y === y);
+    if (q) {
+      for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
+        if (freeAt(q.x + dx, q.y + dy)) return { x: q.x + dx, y: q.y + dy };
+      }
+    }
+    for (let y = 0; y < zone.height; y++) for (let x = 0; x < zone.width; x++) if (freeAt(x, y)) return { x, y };
+    return { x: 1, y: 1 };
+  }
+
+  // The engine asks the architect for a building; the model proposes, the engine decides. A missing,
+  // invalid or over-budget draft is replaced by the deterministic generator, so play never stops.
+  private async buildZone(portal: Portal): Promise<Zone> {
+    const spec = buildingSpec(portal);
+    const fallback = generateBuilding(this.seed(), spec);
+    if (!this.narrator.generateZone) return fallback;
+    try {
+      const draft = await this.narrator.generateZone({
+        id: spec.id, name: spec.name, kind: "building", width: spec.width, height: spec.height,
+        entry: spec.entry, tick: this.tick(), world: this.world,
+      });
+      return validateZoneDraft(draft, spec) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async enterPortal(portal: Portal, niko: Ent, notable: string[]): Promise<void> {
+    const from = this.zone;
+    let target = this.zones.get(portal.to);
+    if (!target) {
+      target = await this.buildZone(portal);
+      this.zones.put(target);
+      notable.push(`Niko enters ${target.name}.`);
+    } else {
+      notable.push(`Niko goes through to ${target.name}.`);
+    }
+    const spot = this.entryTile(target, from.id, niko);
+    this.setZone(niko, target, spot.x, spot.y);
+    this.record("enter", spot.x, spot.y, "niko", { from: from.id, to: target.id, label: portal.label }, true);
+    setMeta(this.db, "visible", JSON.stringify(this.visibleActors(niko, this.ents()).map((e) => e.id).sort()));
   }
 
   private conversation(): Conversation | undefined {
@@ -184,25 +310,14 @@ export class Engine {
     notable.push(`Niko stops talking with ${npc.name}.`);
   }
 
-  // During the fall the only actions are the fall choices; `brace` is hidden when Ether is short.
-  private fallActions(niko: Ent): AvailableAction[] {
-    const cost = this.opening.abilities.brace.ether_cost;
-    const acc: AvailableAction[] = [
-      { id: "fall:steer", label: "Steer toward the houses", action: { type: "fall", choice: "steer" } },
-    ];
-    if (Number(niko.data.ether ?? 0) >= cost) {
-      acc.push({ id: "fall:brace", label: "Brace against the impact", action: { type: "fall", choice: "brace" } });
-    }
-    acc.push({ id: "fall:let_go", label: "Let go and fall", action: { type: "fall", choice: "let_go" } });
-    return acc;
-  }
-
+  // During the fall there are no fixed actions: the player writes what Niko does, so the engine
+  // offers none and the narrator must not invent any.
   private availableActions(niko: Ent, ents: Ent[]): AvailableAction[] {
-    if (this.phase() === "fall") return this.fallActions(niko);
+    if (this.phase() === "fall") return [];
     const acc: AvailableAction[] = [];
     const convo = this.conversation();
     if (convo) {
-      const npc = ents.find((e) => e.id === convo.npc_id && e.type === "npc");
+      const npc = ents.find((e) => e.id === convo.npc_id && e.type === "npc" && e.zone_id === this.zone.id);
       if (npc && near(niko, npc)) {
         acc.push({ id: `reply:${npc.id}:ask`, label: `Ask ${npc.name} a question`, action: { type: "reply", target: npc.id, choice: "ask" } });
         acc.push({ id: `reply:${npc.id}:reassure`, label: `Reassure ${npc.name}`, action: { type: "reply", target: npc.id, choice: "reassure" } });
@@ -212,7 +327,7 @@ export class Engine {
       }
     }
     for (const e of ents) {
-      if (e.type === "npc" && near(niko, e)) {
+      if (e.type === "npc" && e.zone_id === this.zone.id && near(niko, e)) {
         acc.push({ id: `talk:${e.id}`, label: `Talk to ${e.name}`, action: { type: "talk", target: e.id } });
       }
     }
@@ -226,7 +341,8 @@ export class Engine {
   }
 
   private visibleActors(niko: Ent, ents: Ent[]): Ent[] {
-    return ents.filter((e) => e.type === "npc" && canSee(this.zone, niko, e));
+    const z = this.zone;
+    return ents.filter((e) => e.type === "npc" && e.zone_id === z.id && canSee(z, niko, e));
   }
 
   private where(niko: Point, e: Point): string {
@@ -261,7 +377,10 @@ export class Engine {
     if (this.phase() === "fall") {
       const beat = this.fallBeat();
       const i = Math.min(beat, this.opening.beats.length - 1);
-      return { phase: "fall", altitude: this.opening.beats[i].altitude, beat, beats: this.opening.beats.length };
+      return {
+        phase: "fall", altitude: this.opening.beats[i].altitude, beat, beats: this.opening.beats.length,
+        text: this.fallLog().at(-1),
+      };
     }
     if (this.pendingImpact) {
       return {
@@ -309,7 +428,7 @@ export class Engine {
         characterId: niko.id, tick: this.tick(), zoneId: this.zone.id,
         presentCharacters: visible.map((e) => e.id),
       },
-    });
+    }, this.onDelta);
     // The LLM proposes; the engine decides: only options that are real actions survive.
     let valid = n.options.filter((o) => actions.some((a) => a.id === o.id)).slice(0, 3);
     // A waiting NPC must always be reachable: if the narrator forgot `talk`, the engine offers it.
@@ -332,30 +451,58 @@ export class Engine {
     this.record("narration", niko.x, niko.y, null, { text: n.text, options }, false);
   }
 
-  async start(): Promise<void> {
+  async start(onDelta?: DeltaSink): Promise<void> {
     if (getMeta(this.db, "started")) return;
-    const ents = this.ents();
-    const niko = ents.find((e) => e.id === "niko")!;
-    const vis = this.visibleActors(niko, ents);
-    setMeta(this.db, "visible", JSON.stringify(vis.map((e) => e.id).sort()));
-    const events: string[] = [];
-    if (this.phase() === "fall") {
-      events.push(`Niko falls ${this.opening.beats[0].altitude}.`);
-    } else {
-      events.push("Niko wakes up in a bedroom he does not know. The house is silent.");
-      for (const e of vis) events.push(`${e.name} is in the room, ${this.where(niko, e)}.`);
+    this.onDelta = onDelta;
+    try {
+      const ents = this.ents();
+      const niko = ents.find((e) => e.id === "niko")!;
+      const vis = this.visibleActors(niko, ents);
+      setMeta(this.db, "visible", JSON.stringify(vis.map((e) => e.id).sort()));
+      const events: string[] = [];
+      if (this.phase() === "fall") {
+        events.push(`Niko falls ${this.opening.beats[0].altitude}.`);
+      } else {
+        events.push("Niko wakes up in a bedroom he does not know. The house is silent.");
+        for (const e of vis) events.push(`${e.name} is in the room, ${this.where(niko, e)}.`);
+      }
+      await this.narrate(events);
+      setMeta(this.db, "started", "1");
+    } finally {
+      this.onDelta = undefined;
     }
-    await this.narrate(events);
-    setMeta(this.db, "started", "1");
   }
 
-  async takeTurn(a: Action): Promise<{ ok: boolean; error?: string }> {
+  async takeTurn(a: Action, onDelta?: DeltaSink): Promise<{ ok: boolean; error?: string }> {
+    this.onDelta = onDelta;
+    try {
+      return await this.runTurn(a);
+    } finally {
+      this.onDelta = undefined;
+    }
+  }
+
+  private async runTurn(a: Action): Promise<{ ok: boolean; error?: string }> {
     if (this.phase() === "fall") return this.fallStep(a);
     const z = this.zone;
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
     const notable: string[] = [];
     const convo = this.conversation();
+
+    // Free text: the engine maps it to a real action when it can, and otherwise records it as a line
+    // the narrator answers. This keeps the "type anything" flow of the opening for the whole game.
+    if (a.type === "free") {
+      const text = (a.text ?? "").trim();
+      if (!text) return { ok: false, error: "Say what Niko does." };
+      if (text.length > 500) return { ok: false, error: "That is too long. Keep it short." };
+      const mapped = parseFreeAction(text, z, ents, convo);
+      if (mapped) return this.runTurn(mapped);
+      this.record("say", niko.x, niko.y, "niko", { text }, true);
+      notable.push(`Niko: ${text}.`);
+      await this.advanceWorld(notable);
+      return { ok: true };
+    }
 
     // While a conversation is open, the only ways forward are answering it or leaving it.
     if (convo && a.type !== "reply" && a.type !== "leave" && !(a.type === "talk" && a.target === convo.npc_id)) {
@@ -368,7 +515,12 @@ export class Engine {
         if (!d) return { ok: false, error: "Invalid direction." };
         const nx = niko.x + d[0], ny = niko.y + d[1];
         if (nx < 0 || ny < 0 || nx >= z.width || ny >= z.height) return { ok: false, error: "Out of the map." };
-        if (z.map[ny][nx] === "D") return { ok: false, error: MSG_DOOR };
+        if (z.map[ny][nx] === "D") {
+          const portal = (z.portals ?? []).find((p) => p.x === nx && p.y === ny);
+          if (!portal) return { ok: false, error: MSG_DOOR };
+          await this.enterPortal(portal, niko, notable);
+          break;
+        }
         if (!this.free(nx, ny, ents)) return { ok: false, error: "Something blocks the way." };
         this.moveTo(niko, nx, ny);
         this.record("move", nx, ny, "niko", { dir: a.dir }, true);
@@ -378,7 +530,7 @@ export class Engine {
         this.record("wait", niko.x, niko.y, "niko", {}, true);
         break;
       case "talk": {
-        const t = ents.find((e) => e.id === a.target && e.type === "npc");
+        const t = ents.find((e) => e.id === a.target && e.type === "npc" && e.zone_id === z.id);
         if (!t || !near(niko, t)) return { ok: false, error: "There is no one to talk to there." };
         if (convo) {
           const beat = convo.beat + 1;
@@ -395,7 +547,7 @@ export class Engine {
         break;
       }
       case "reply": {
-        const t = ents.find((e) => e.id === a.target && e.type === "npc");
+        const t = ents.find((e) => e.id === a.target && e.type === "npc" && e.zone_id === z.id);
         if (!convo || !t || convo.npc_id !== t.id) return { ok: false, error: "There is no conversation to answer." };
         if (!near(niko, t)) return { ok: false, error: "That conversation is out of reach." };
         const beat = convo.beat + 1;
@@ -405,7 +557,7 @@ export class Engine {
         break;
       }
       case "leave": {
-        const t = ents.find((e) => e.id === a.target && e.type === "npc");
+        const t = ents.find((e) => e.id === a.target && e.type === "npc" && e.zone_id === z.id);
         if (!convo || !t || convo.npc_id !== t.id) return { ok: false, error: "There is no conversation to leave." };
         this.closeConversation(convo, t, niko, notable);
         break;
@@ -430,20 +582,19 @@ export class Engine {
   // beat lands Niko and then runs the normal world step for that turn.
   private async fallStep(a: Action): Promise<{ ok: boolean; error?: string }> {
     if (a.type !== "fall") return { ok: false, error: "You are still falling." };
-    if (a.choice !== "steer" && a.choice !== "brace" && a.choice !== "let_go") {
-      return { ok: false, error: "Unknown action." };
-    }
+    const text = (a.text ?? "").trim();
+    if (!text) return { ok: false, error: "Say what Niko does." };
+    if (text.length > 500) return { ok: false, error: "That is too long. Keep it short." };
     const cost = this.opening.abilities.brace.ether_cost;
     const niko = this.ents().find((e) => e.id === "niko")!;
-    // A forced brace below its cost is rejected by the engine, so no client or LLM can skip it.
-    if (a.choice === "brace" && Number(niko.data.ether ?? 0) < cost) {
-      return { ok: false, error: "Not enough Ether to brace." };
-    }
     const log = this.fallLog();
-    log.push(a.choice);
-    if (a.choice === "brace") {
+    log.push(text);
+    // A brace only lands if the Ether is there; a shortfall simply fails, it does not eat the turn.
+    const intent = fallIntent(text);
+    if (intent.brace && Number(niko.data.ether ?? 0) >= cost) {
       niko.data.ether -= cost;
       this.db.prepare("UPDATE entities SET data = ? WHERE id = 'niko'").run(JSON.stringify(niko.data));
+      setMeta(this.db, "fall_brace", "1");
     }
     setMeta(this.db, "fall_log", JSON.stringify(log));
     const beat = this.fallBeat() + 1;
@@ -454,17 +605,17 @@ export class Engine {
       this.land(log, notable);
       await this.advanceWorld(notable);
     } else {
-      await this.narrate([]);
+      await this.narrate([`Niko: ${text}.`]);
     }
     return { ok: true };
   }
 
   // The landing is deterministic: candidates are filtered first, then rngFor(seed, 0, "landing")
   // picks one. `steer` restricts the candidates to the configured room.
-  private land(choices: FallChoice[], notable: string[]): void {
+  private land(choices: string[], notable: string[]): void {
     const z = this.zone;
-    const impact: "soft" | "hard" = choices.includes("brace") ? "soft" : "hard";
-    const steer = choices.includes("steer");
+    const impact: "soft" | "hard" = this.fallBrace() ? "soft" : "hard";
+    const steer = choices.some((t) => fallIntent(t).steer);
     const ents = this.ents();
     const room = z.rooms.find((r) => r.id === this.opening.landing.steer_room);
     const inRoom = (x: number, y: number) =>
@@ -505,7 +656,8 @@ export class Engine {
     this.db.prepare("UPDATE entities SET data = ? WHERE id = 'niko'").run(JSON.stringify(d));
 
     // NPCs pursue their agenda with the same movement rules as Niko; wander is only the fallback.
-    for (const npc of ents.filter((e) => e.type === "npc")) {
+    // Only the NPCs in Niko's zone act: a character in another zone has no shared grid to path on.
+    for (const npc of ents.filter((e) => e.type === "npc" && e.zone_id === z.id)) {
       if (this.conversation()?.npc_id === npc.id) continue;
       const agenda = this.agendaOf(npc);
       if (agenda) {
@@ -561,9 +713,45 @@ export class Engine {
     return Object.fromEntries(this.ents().map((e) => [e.id, [e.x, e.y] as [number, number]]));
   }
 
+  // Read-only inspection for the debug tab: raw tables, recent events with their witnesses, the
+  // seeded RNG state and the LLM spend, straight from the database.
+  debug() {
+    const all = (sql: string) => this.db.prepare(sql).all() as any[];
+    const parse = (s: string) => { try { return JSON.parse(s); } catch { return s; } };
+    const ents = this.ents();
+    const niko = ents.find((e) => e.id === "niko");
+    return {
+      tick: this.tick(),
+      phase: this.phase(),
+      seed: this.seed(),
+      started: getMeta(this.db, "started") ?? null,
+      niko: niko ? { x: niko.x, y: niko.y, ether: niko.data.ether, ether_max: niko.data.ether_max } : null,
+      zone: { id: this.zone.id, name: this.zone.name, width: this.zone.width, height: this.zone.height },
+      entities: ents.map((e) => ({ id: e.id, type: e.type, name: e.name, x: e.x, y: e.y, data: e.data })),
+      positions: this.positions(),
+      settings: all("SELECT key, value FROM settings ORDER BY key"),
+      counts: this.db.prepare(
+        `SELECT (SELECT COUNT(*) FROM events) AS events, (SELECT COUNT(*) FROM memories) AS memories,
+                (SELECT COUNT(*) FROM llm_calls) AS llm_calls, (SELECT COUNT(*) FROM conversations) AS conversations,
+                (SELECT COUNT(*) FROM witnesses) AS witnesses, (SELECT COUNT(*) FROM facts_known) AS facts_known`,
+      ).get(),
+      events: all(
+        `SELECT e.id, e.tick, e.type, e.actor_id, e.x, e.y, e.data,
+                (SELECT GROUP_CONCAT(w.character_id) FROM witnesses w WHERE w.event_id = e.id) AS witnesses
+         FROM events e ORDER BY e.id DESC LIMIT 40`,
+      ).map((r) => ({ ...r, data: parse(r.data), witnesses: r.witnesses ? String(r.witnesses).split(",") : [] })),
+      memories: all("SELECT id, character_id, event_id, tick, text, importance FROM memories ORDER BY id DESC LIMIT 40"),
+      llm_calls: all(
+        `SELECT id, tick, role, model, tokens_input, tokens_output, cost, request, response
+         FROM llm_calls ORDER BY id DESC LIMIT 10`,
+      ),
+    };
+  }
+
   state() {
     const ents = this.ents();
     const niko = ents.find((e) => e.id === "niko")!;
+    const z = this.zone;
     const tick = this.tick();
     const phase = this.phase();
     const beat = this.fallBeat();
@@ -586,9 +774,13 @@ export class Engine {
       ...(phase === "fall"
         ? { fall: { altitude: this.opening.beats[i].altitude, beat, beats: this.opening.beats.length } }
         : {}),
-      zone: { id: this.zone.id, name: this.zone.name, width: this.zone.width, height: this.zone.height,
-        map: this.zone.map, objects: this.zone.objects, rooms: this.zone.rooms },
-      room: roomAt(this.zone, niko.x, niko.y),
+      zone: {
+        id: z.id, name: z.name, kind: z.kind, width: z.width, height: z.height,
+        map: z.map, objects: z.objects, rooms: z.rooms,
+        portals: (z.portals ?? []).map((p) => ({ x: p.x, y: p.y, label: p.label })),
+      },
+      zoneId: z.id,
+      room: roomAt(z, niko.x, niko.y),
       niko: { x: niko.x, y: niko.y, ether: niko.data.ether, ether_max: niko.data.ether_max },
       npcs: this.visibleActors(niko, ents).map((e) => ({ id: e.id, name: e.name, x: e.x, y: e.y })),
       log: narr.map((n) => ({ tick: n.tick, text: n.text })),

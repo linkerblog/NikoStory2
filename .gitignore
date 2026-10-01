@@ -38,6 +38,7 @@ temp/
 # Editors and IDEs
 .vscode/
 .idea/
+.kilo/
 *.swp
 *.swo
 *~

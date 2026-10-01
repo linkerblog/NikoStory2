@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { openDb, type Db } from "../src/db.js";
+import { openDb, setMeta, type Db } from "../src/db.js";
 import { loadMemoryRules } from "../src/memory.js";
-import { OfflineNarrator, OpenRouterNarrator, parseNarration, hasTileCount, jaccard, narrationRejected, type Context } from "../src/narrator.js";
+import { OfflineNarrator, OpenRouterNarrator, parseNarration, partialNarration, hasTileCount, jaccard, narrationRejected, type Context, type Delta } from "../src/narrator.js";
 
 const DATA = fileURLToPath(new URL("../data", import.meta.url));
 
@@ -128,6 +128,67 @@ test("the memory block is empty when the character has no memories", async () =>
   }
   const user = JSON.parse(captured!.messages[1].content) as { niko_memories: string[] };
   assert.deepEqual(user.niko_memories, []);
+});
+
+test("partialNarration reads the narration field while it streams", () => {
+  assert.equal(partialNarration('{"narration":"Niko la'), "Niko la");
+  assert.equal(partialNarration('{"narration":"a\\"b\\n'), 'a"b\n');
+  assert.equal(partialNarration('{"options":[]'), null);
+  assert.equal(partialNarration('{"narration":"Done","options":[]}'), "Done");
+});
+
+test("the LLM narrator streams reasoning and narration deltas", async () => {
+  const enc = new TextEncoder();
+  const sse = (objs: unknown[]) => new Response(new ReadableStream({
+    start(c) { for (const o of objs) c.enqueue(enc.encode(`data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`)); c.close(); },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const original = globalThis.fetch;
+  (globalThis as { fetch: unknown }).fetch = async () => sse([
+    { choices: [{ delta: { reasoning: "think " } }] },
+    { choices: [{ delta: { content: '{"narration":"Niko ' } }] },
+    { choices: [{ delta: { content: 'lands."' } }] },
+    { choices: [{ delta: { content: ',"options":[{"id":"wait","text":"Wait"}]}' } }] },
+    { usage: { prompt_tokens: 3, completion_tokens: 2, cost: 0.01 } },
+    "[DONE]",
+  ]);
+  try {
+    const db = openDb(":memory:");
+    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
+    const deltas: Delta[] = [];
+    const out = await narrator.narrate(ctx, (d) => deltas.push(d));
+    assert.equal(out.text, "Niko lands.");
+    assert.deepEqual(out.options, [{ id: "wait", text: "Wait" }]);
+    assert.deepEqual(deltas, [
+      { kind: "reasoning", text: "think " },
+      { kind: "text", text: "Niko " },
+      { kind: "text", text: "lands." },
+    ]);
+    const row = db.prepare("SELECT tokens_input, tokens_output, cost FROM llm_calls").get();
+    assert.deepEqual(row, { tokens_input: 3, tokens_output: 2, cost: 0.01 });
+  } finally {
+    (globalThis as { fetch: unknown }).fetch = original;
+  }
+});
+
+test("a saved system prompt override is sent instead of the default", async () => {
+  let captured: { messages: { role: string; content: string }[] } | undefined;
+  const original = globalThis.fetch;
+  (globalThis as { fetch: unknown }).fetch = async (_url: unknown, init: { body: string }) => {
+    captured = JSON.parse(init.body);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: '{"narration":"ok","options":[]}' } }], usage: {} }),
+      { status: 200 },
+    );
+  };
+  try {
+    const db = openDb(":memory:");
+    setMeta(db, "prompt_system", "CUSTOM SYSTEM");
+    const narrator = new OpenRouterNarrator(db, { apiKey: "t", model: "m", language: "English", spendCapUsd: 0.5 });
+    await narrator.narrate(ctx);
+    assert.equal(captured!.messages[0].content, "CUSTOM SYSTEM");
+  } finally {
+    (globalThis as { fetch: unknown }).fetch = original;
+  }
 });
 
 test("narrationRejected flags tile counts and too-similar narrations", () => {

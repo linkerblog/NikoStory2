@@ -55,6 +55,19 @@ const MIGRATIONS: string[] = [
      tick         INTEGER NOT NULL,
      PRIMARY KEY (character_id, fact_id)
    );`,
+  `CREATE TABLE zones (
+     id           TEXT PRIMARY KEY,
+     name         TEXT NOT NULL,
+     description  TEXT NOT NULL,
+     width        INTEGER NOT NULL,
+     height       INTEGER NOT NULL,
+     map          TEXT NOT NULL,
+     objects      TEXT NOT NULL,
+     rooms        TEXT NOT NULL,
+     portals      TEXT NOT NULL,
+     kind         TEXT NOT NULL,
+     created_tick INTEGER NOT NULL
+   );`,
 ];
 
 export function openDb(path: string): Db {
@@ -76,6 +89,26 @@ export function openDb(path: string): Db {
   return db;
 }
 
+// Wipes every game table so a fresh save can be seeded over the same file. Children go first:
+// witnesses and memories reference events, so the events cannot be deleted while they survive.
+// `migrations` is never touched. `settings` goes last, clearing the seed marker with everything else.
+export function clearSave(db: Db): void {
+  db.transaction(() => {
+    db.exec(`
+      DELETE FROM witnesses;
+      DELETE FROM memories;
+      DELETE FROM events;
+      DELETE FROM agenda_state;
+      DELETE FROM conversations;
+      DELETE FROM facts_known;
+      DELETE FROM llm_calls;
+      DELETE FROM entities;
+      DELETE FROM settings;
+      DELETE FROM zones;
+    `);
+  })();
+}
+
 export function getMeta(db: Db, key: string): string | undefined {
   return (db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined)?.value;
 }
@@ -84,4 +117,8 @@ export function setMeta(db: Db, key: string, value: string): void {
   db.prepare(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   ).run(key, value);
+}
+
+export function deleteMeta(db: Db, key: string): void {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
 }
