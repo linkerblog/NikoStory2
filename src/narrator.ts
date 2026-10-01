@@ -120,6 +120,7 @@ Rules:
 - End on pressure, a question or a visible choice.
 - Do not decide for Niko: tell what happens and what he perceives. Do not invent characters or objects that are not in the situation.
 - The world facts in the situation are true; do not contradict them and do not invent new ones.
+- While arrival.phase is "fall", Niko is alone in the open air: no other character is with him, near him or able to see him, and visible_characters is empty.
 - When scene.justResolved is true, Niko has just learned the answer to the scene question (scene.goal): close the beat on that answer.
 Respond ONLY with JSON: {"narration": string}.`;
 

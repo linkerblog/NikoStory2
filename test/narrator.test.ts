@@ -14,7 +14,7 @@ const DATA = fileURLToPath(new URL("../data", import.meta.url));
 const role = (over: Partial<RoleConfig> = {}): RoleConfig => ({ model: "m", reasoning: false, idleMs: 5000, ...over });
 const cfg = (over: Partial<LlmConfig> = {}): LlmConfig => ({
   apiKey: "t", language: "English", spendCapUsd: 0.5,
-  roles: { interpreter: role(), narrator: role(), architect: role(), continuity: role(), memory: role(), npc: role() },
+  roles: { interpreter: role(), narrator: role(), architect: role(), continuity: role(), memory: role(), npc: role(), cast: role() },
   ...over,
 });
 const stubDb = () => ({ prepare: () => ({ get: () => ({ t: 0 }), run: () => {} }) }) as unknown as Db;

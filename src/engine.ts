@@ -16,6 +16,7 @@ import { describeEffect, keywordsOf, type Effect, type Interpretation, type Inte
 import type { NpcContext, NpcDecision, NpcDecider } from "./npc.js";
 import type { Action, Dir, ItemRef, ItemVerb, ReplyChoice } from "./actions.js";
 import { readItems, type Item } from "./items.js";
+import type { CastWriter } from "./cast.js";
 
 export type { Action, Dir, ItemVerb, ReplyChoice } from "./actions.js";
 export { parseFreeAction } from "./actions.js";
@@ -43,6 +44,9 @@ export interface EngineServices {
   // Optional: proposes one NPC's action. Without it (offline, tests, over budget) the engine keeps its
   // deterministic agenda step, so behavior and replay are unchanged.
   npcdecider?: NpcDecider;
+  // Optional: writes the personality and voice of a new game's cast. Without it (offline, tests) the
+  // generated temperaments from `data/cast.json` stand. Used by `reset` in `src/game.ts`, not by turns.
+  castwriter?: CastWriter;
 }
 
 // A conversation is between two participants. `npc_id` is legacy (kept for the NOT NULL of old rows)
@@ -345,6 +349,9 @@ export class Engine {
   }
 
   private visibleActors(niko: Ent, ents: Ent[]): Ent[] {
+    // Niko keeps his seed tile in the house while he falls, but he is in the open sky: nobody is in
+    // reach of his eyes until the landing puts him on a tile.
+    if (this.phase() === "fall") return [];
     const z = this.zone;
     return ents.filter((e) => e.type === "npc" && e.zone_id === z.id && canSee(z, niko, e));
   }
@@ -370,10 +377,22 @@ export class Engine {
     return dir ? DIR_WORD[dir] ?? null : null;
   }
 
+  // A generated cast words the facts that name a character; the scene's own text is the default, so a
+  // save without overrides (the authored cast, or one that predates them) reads exactly as before.
+  private factTexts(): Record<string, string> {
+    try {
+      const v = JSON.parse(getMeta(this.db, "fact_texts") ?? "{}");
+      return v && typeof v === "object" ? v : {};
+    } catch {
+      return {};
+    }
+  }
+
   private knownFacts(): string[] {
     const ids = (this.db.prepare("SELECT fact_id FROM facts_known WHERE character_id = 'niko'").all() as
       { fact_id: string }[]).map((r) => r.fact_id);
-    return this.scene.facts.filter((f) => ids.includes(f.id)).map((f) => f.text);
+    const texts = this.factTexts();
+    return this.scene.facts.filter((f) => ids.includes(f.id)).map((f) => texts[f.id] ?? f.text);
   }
 
   // Items Niko can act on: what he holds and what lies in his zone, not hidden. Hidden items are
@@ -451,10 +470,15 @@ export class Engine {
     const convoNpc = convoOther ? ents.find((e) => e.id === convoOther) : undefined;
     const arrival = this.arrivalContext();
     this.pendingImpact = null;
+    // While he falls the house is not his place: telling the narrator "Living Room" would put walls
+    // and people around a character who is alone in the air.
+    const place = this.phase() === "fall"
+      ? { name: "The sky", description: "Open air high above the world. Niko is alone and nothing else is within reach." }
+      : { name: this.zone.name, description: this.zone.description, room: roomAt(this.zone, niko.x, niko.y) };
     const n = await this.narrator.narrate({
       tick: this.tick(),
       sheet: { name: niko.name, ...niko.data },
-      place: { name: this.zone.name, description: this.zone.description, room: roomAt(this.zone, niko.x, niko.y) },
+      place,
       world: this.world,
       arrival,
       visible: visible.map((e) => ({

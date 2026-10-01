@@ -2,9 +2,9 @@ import type { Db } from "./db.js";
 
 // Every model call belongs to a role. Each role has its own model, reasoning flag and idle timeout,
 // so quality can be tuned per job without a global switch. The spend cap stays global.
-export type LlmRole = "interpreter" | "narrator" | "architect" | "continuity" | "memory" | "npc";
+export type LlmRole = "interpreter" | "narrator" | "architect" | "continuity" | "memory" | "npc" | "cast";
 
-export const LLM_ROLES: LlmRole[] = ["interpreter", "narrator", "architect", "continuity", "memory", "npc"];
+export const LLM_ROLES: LlmRole[] = ["interpreter", "narrator", "architect", "continuity", "memory", "npc", "cast"];
 
 export interface RoleConfig { model: string; reasoning: boolean; idleMs: number }
 export interface LlmConfig {
@@ -53,6 +53,9 @@ export class LlmClient {
   get spendCapUsd(): number { return this.cfg.spendCapUsd; }
 
   role(role: LlmRole): RoleConfig { return this.cfg.roles[role]; }
+
+  // The Models tab swaps the role table between calls. A call already in flight keeps the config it read.
+  configure(roles: Record<LlmRole, RoleConfig>): void { this.cfg = { ...this.cfg, roles }; }
 
   spent(): number {
     return (this.store.prepare("SELECT COALESCE(SUM(cost), 0) AS t FROM llm_calls").get() as { t: number }).t;

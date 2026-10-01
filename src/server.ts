@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { randomInt } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +9,9 @@ import { RETRY_HINT, OpenRouterNarrator, systemPrompt } from "./narrator.js";
 import { OpenRouterInterpreter } from "./interpreter.js";
 import { OpenRouterMemories } from "./memory.js";
 import { OpenRouterNpcDecider } from "./npc.js";
-import { LLM_ROLES, LlmClient, type LlmRole, type RoleConfig } from "./llm.js";
+import { OpenRouterCastWriter } from "./cast.js";
+import { LLM_ROLES, LlmClient, type LlmRole } from "./llm.js";
+import { ROLE_INFO, loadOverrides, parseCatalog, parseModelsPatch, resolveRoles, saveOverrides, type CatalogModel } from "./models.js";
 import type { EngineServices } from "./engine.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -24,40 +27,45 @@ if (existsSync(envPath)) {
 
 const env = process.env;
 
-// Each role gets its own model, reasoning flag and idle timeout. <ROLE>_MODEL defaults to
-// NARRATOR_MODEL; <ROLE>_REASONING defaults per role; <ROLE>_IDLE_MS defaults by the reasoning flag.
-const REASONING_DEFAULT: Record<LlmRole, boolean> = {
-  interpreter: true, narrator: false, architect: true, continuity: true, memory: false, npc: true,
-};
-
-function roleConfig(role: LlmRole): RoleConfig {
-  const key = role.toUpperCase();
-  const model = env[`${key}_MODEL`] || env.NARRATOR_MODEL!;
-  const reasoning = env[`${key}_REASONING`] !== undefined ? env[`${key}_REASONING`] === "1" : REASONING_DEFAULT[role];
-  const idleMs = Number(env[`${key}_IDLE_MS`] ?? (reasoning ? 120_000 : 60_000));
-  return { model, reasoning, idleMs };
-}
+// Each role has its own model, reasoning flag and idle timeout. `resolveRoles` (src/models.ts) merges the
+// Models tab choices with `.env`. The engine holds this one object, so a change from the tab edits it in
+// place: the player can go from offline to LLM, or swap a model, without restarting the server.
+const services: EngineServices = offlineServices();
+let llm: LlmClient | undefined;
+let refreshServices = () => {};
 
 function buildServices(db: import("./db.js").Db, memory: import("./memory.js").MemoryRules, stakes: import("./stakes.js").StakesRules): EngineServices {
-  if (!env.OPENROUTER_API_KEY || !env.NARRATOR_MODEL) {
-    console.log("Roles: offline (set OPENROUTER_API_KEY and NARRATOR_MODEL in .env to use the LLM)");
-    return offlineServices();
-  }
-  const roles = Object.fromEntries(LLM_ROLES.map((r) => [r, roleConfig(r)])) as Record<LlmRole, RoleConfig>;
-  const llm = new LlmClient(db, {
-    apiKey: env.OPENROUTER_API_KEY,
-    language: env.NARRATION_LANGUAGE ?? "English",
-    spendCapUsd: Number(env.SPEND_CAP_USD ?? 0.5),
-    roles,
-  });
-  const tag = (r: LlmRole) => `${r} ${roles[r].model}${roles[r].reasoning ? "(+reasoning)" : ""}`;
-  console.log(`Roles: ${LLM_ROLES.map(tag).join(", ")}`);
-  return {
-    narrator: new OpenRouterNarrator(llm, memory, stakes),
-    interpreter: new OpenRouterInterpreter(llm),
-    memories: new OpenRouterMemories(llm),
-    npcdecider: new OpenRouterNpcDecider(llm),
+  refreshServices = () => {
+    const roles = resolveRoles(env, loadOverrides(db));
+    if (!env.OPENROUTER_API_KEY || !roles.narrator.model) {
+      llm = undefined;
+      delete services.npcdecider;
+      delete services.castwriter;
+      Object.assign(services, offlineServices());
+      console.log("Roles: offline (set OPENROUTER_API_KEY in .env and pick a narrator model to use the LLM)");
+      return;
+    }
+    if (llm) llm.configure(roles);
+    else {
+      llm = new LlmClient(db, {
+        apiKey: env.OPENROUTER_API_KEY,
+        language: env.NARRATION_LANGUAGE ?? "English",
+        spendCapUsd: Number(env.SPEND_CAP_USD ?? 0.5),
+        roles,
+      });
+      Object.assign(services, {
+        narrator: new OpenRouterNarrator(llm, memory, stakes),
+        interpreter: new OpenRouterInterpreter(llm),
+        memories: new OpenRouterMemories(llm),
+        npcdecider: new OpenRouterNpcDecider(llm),
+        castwriter: new OpenRouterCastWriter(llm),
+      });
+    }
+    const tag = (r: LlmRole) => `${r} ${roles[r].model}${roles[r].reasoning ? "(+reasoning)" : ""}`;
+    console.log(`Roles: ${LLM_ROLES.map(tag).join(", ")}`);
   };
+  refreshServices();
+  return services;
 }
 
 const { engine, reset, db } = createGame(
@@ -73,18 +81,15 @@ function promptsPayload() {
   const language = env.NARRATION_LANGUAGE ?? "English";
   const sys = getMeta(db, "prompt_system");
   const ret = getMeta(db, "prompt_retry");
-  const configured = !!(env.OPENROUTER_API_KEY && env.NARRATOR_MODEL);
+  const resolved = resolveRoles(env, loadOverrides(db));
   const roles = Object.fromEntries(
-    LLM_ROLES.map((r) => {
-      const cfg = roleConfig(r);
-      return [r, { model: cfg.model ?? null, reasoning: cfg.reasoning }];
-    }),
+    LLM_ROLES.map((r) => [r, { model: resolved[r].model || null, reasoning: resolved[r].reasoning }]),
   );
   return {
     language,
-    model: env.NARRATOR_MODEL ?? null,
-    reasoning: env.NARRATOR_REASONING === "1",
-    configured,
+    model: resolved.narrator.model || null,
+    reasoning: resolved.narrator.reasoning,
+    configured: llm !== undefined,
     roles,
     system: sys || systemPrompt(language),
     retry: ret || RETRY_HINT,
@@ -94,6 +99,53 @@ function promptsPayload() {
     retryCustom: !!ret,
   };
 }
+
+// What the Models tab shows: the effective config of every role and where each value comes from. The key
+// itself never leaves the server; the tab only learns whether there is one.
+function modelsPayload() {
+  const overrides = loadOverrides(db);
+  const resolved = resolveRoles(env, overrides);
+  const base = resolveRoles(env, {}); // what each role would be with no choice made in the tab
+  const spent = (db.prepare("SELECT COALESCE(SUM(cost), 0) AS t FROM llm_calls").get() as { t: number }).t;
+  return {
+    ok: true,
+    keyPresent: !!env.OPENROUTER_API_KEY,
+    live: llm !== undefined,
+    spentUsd: spent,
+    spendCapUsd: Number(env.SPEND_CAP_USD ?? 0.5),
+    roles: LLM_ROLES.map((r) => ({
+      role: r,
+      info: ROLE_INFO[r],
+      model: resolved[r].model,
+      modelSource: resolved[r].modelSource,
+      reasoning: resolved[r].reasoning,
+      reasoningSource: resolved[r].reasoningSource,
+      envModel: env[`${r.toUpperCase()}_MODEL`] || null,
+      baseReasoning: base[r].reasoning,
+      override: overrides[r] ?? null,
+    })),
+  };
+}
+
+// The public OpenRouter model list feeds the tab's autocomplete. It is fetched here, without the key, and
+// kept for an hour; when it cannot be reached the tab still accepts any id typed by hand.
+let catalog: { at: number; models: CatalogModel[] } | undefined;
+async function catalogPayload() {
+  if (!catalog || Date.now() - catalog.at > 3_600_000) {
+    try {
+      const r = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(10_000) });
+      if (!r.ok) throw new Error(`OpenRouter responded ${r.status}`);
+      catalog = { at: Date.now(), models: parseCatalog(await r.json()) };
+    } catch (e) {
+      if (!catalog) return { ok: false, error: `Could not load the model list: ${(e as Error).message}`, models: [] };
+    }
+  }
+  return { ok: true, models: catalog.models };
+}
+
+// Every "Start new game" is a new world with new characters. The seed is drawn here, at the edge of the
+// simulation, and then lives in the save, so the game it opens still replays from its own seed.
+const freshSeed = () => randomInt(1, 2 ** 31);
 
 const html = readFileSync(join(root, "public", "index.html"));
 let busy = false; // one turn at a time: the narrator is asynchronous
@@ -153,6 +205,23 @@ const server = createServer(async (req, res) => {
       apply("prompt_retry", body.retry);
       if (errors.length) return json(400, { ok: false, error: errors.join("; ") });
       json(200, { ok: true, prompts: promptsPayload() });
+    } else if (req.method === "GET" && req.url === "/api/models") {
+      json(200, modelsPayload());
+    } else if (req.method === "GET" && req.url === "/api/models/catalog") {
+      json(200, await catalogPayload());
+    } else if (req.method === "POST" && req.url === "/api/models") {
+      if (busy) return json(409, { ok: false, error: "Turn already in progress." });
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        return json(400, { ok: false, error: "Invalid JSON body." });
+      }
+      const parsed = parseModelsPatch(body);
+      if ("error" in parsed) return json(400, { ok: false, error: parsed.error });
+      saveOverrides(db, parsed.patch);
+      refreshServices();
+      json(200, modelsPayload());
     } else if (req.method === "POST" && req.url === "/api/turn") {
       if (busy) return json(409, { ok: false, error: "Turn already in progress." });
       busy = true;
@@ -183,7 +252,7 @@ const server = createServer(async (req, res) => {
         if (wantsStream(req)) {
           const send = sse(res);
           try {
-            await reset((d) => send("delta", d));
+            await reset((d) => send("delta", d), { seed: freshSeed() });
             send("done", { ok: true, state: engine.state() });
           } catch (e) {
             console.error(e);
@@ -191,7 +260,7 @@ const server = createServer(async (req, res) => {
           }
           res.end();
         } else {
-          await reset();
+          await reset(undefined, { seed: freshSeed() });
           json(200, { ok: true, state: engine.state() });
         }
       } finally {

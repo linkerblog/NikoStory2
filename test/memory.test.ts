@@ -36,7 +36,7 @@ test("the memories migration applies on an older schema and keeps existing rows"
 
   const db2 = openDb(path);
   const migrations = (db2.prepare("SELECT n FROM migrations ORDER BY n").all() as { n: number }[]).map((r) => r.n);
-  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(migrations, [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal((db2.prepare("SELECT COUNT(*) c FROM memories").get() as { c: number }).c, 0);
   assert.equal((db2.prepare("SELECT value FROM settings WHERE key = 'probe'").get() as { value: string }).value, "kept");
   db2.close();

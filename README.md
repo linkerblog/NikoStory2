@@ -24,16 +24,23 @@ impact). After landing in the house, walk out of the front door to the street an
 around it; each building's interior is generated the first time you enter and is kept. Everything sits
 on a 2D grid where 1 tile = 1 metre. Write what Niko does in the Actions box or the command line and
 the engine resolves it. Move with the arrows or WASD; wait with space. There are no preset options.
-To start from scratch, press the `Reset` button (or type `reset` in the command line); to wipe the save
-by hand, delete `game.db`.
+To start from scratch, press the `Reset` button (or type `reset` in the command line): every start is a
+new world with a new seed and **new characters**, generated from `data/cast.json`. The first game of a
+fresh save uses the authored NPCs of `data/npcs.json`. To wipe the save by hand, delete `game.db`.
 
 ## Using the LLM
 
 In `.env` define `OPENROUTER_API_KEY` and `NARRATOR_MODEL` (pick one at https://openrouter.ai/models).
 Every role has its own model, reasoning flag and idle timeout: `<ROLE>_MODEL` (defaults to
 `NARRATOR_MODEL`), `<ROLE>_REASONING` and `<ROLE>_IDLE_MS`, for the roles `INTERPRETER`, `NARRATOR`,
-`ARCHITECT`, `CONTINUITY`, `MEMORY` and `NPC`. Reasoning defaults on for the interpreter, the
-architect, the continuity check and the NPC decider, and off for the narrator and the memory writer.
+`ARCHITECT`, `CONTINUITY`, `MEMORY`, `NPC` and `CAST`. Reasoning defaults on for the interpreter, the
+architect, the continuity check and the NPC decider, and off for the narrator, the memory writer and the
+cast writer.
+The **Models** tab (topbar or `F3`) edits the model and the reasoning flag of every role from the app and
+applies them to the next call, with no restart: it can even switch the LLM on when `.env` has a key but no model.
+Its choices are saved in the `role_config` table, beat `.env`, and survive "Start new game"; "Clear all
+choices" returns to `.env`. The model box autocompletes from the public OpenRouter list and shows the price.
+The API key is still read only from `.env` and never reaches the browser.
 A turn can take several calls
 (interpreter, narrator, continuity, memory), and the idle timeout resets on every streamed chunk, so a
 long reasoning call is not cut off. Every call is stored in `llm_calls` with its real role, tokens and,
@@ -48,12 +55,14 @@ continuity rewrite. If that fails the offline narrator is used without breaking 
 |---|---|
 | `src/db.ts` | SQLite open, numbered migrations and `settings` helpers |
 | `src/world.ts` | Loads the zone, world and opening data and seeds Niko and the NPCs |
+| `src/cast.ts` | Loads and validates `data/cast.json` and generates a new cast from a seed |
 | `src/zones.ts` | Zone store, the deterministic street/building generator and the LLM-draft validator |
 | `src/actions.ts` | The single `Action` union and the deterministic free-text parser |
 | `src/rules.ts` | Loads and validates `data/rules.json` (abilities, effect limits, inventory slots, world limits) |
 | `src/items.ts` | Items: the `Item` type, `data/items.json` validation and the once-per-save seeding |
 | `src/interpreter.ts` | The `Effect`/`Interpretation` types, the offline interpreter and the OpenRouter one |
 | `src/llm.ts` | Per-role model/reasoning/idle config, the streaming OpenRouter client and role logging |
+| `src/models.ts` | Merges the Models tab choices with `.env` per role, validates edits and parses the OpenRouter model list |
 | `src/engine.ts` | Effects, the opening fall, tick clock, Ether, perception, agendas, conversations, narration and `state()` |
 | `src/agenda.ts` | Deterministic goals and BFS pathing for NPCs |
 | `src/npc.ts` | The optional `npc` role: one proposal per actor, validated by the engine |
@@ -64,7 +73,7 @@ continuity rewrite. If that fails the offline narrator is used without breaking 
 | `src/game.ts` | Wires database, world, engine and the roles together |
 | `src/server.ts` | Minimal `.env` loader and HTTP server (one turn at a time) |
 | `public/index.html` | Terminal-style client: draws state and sends commands |
-| `data/` | Zone, rooms, scene, items, world facts, opening, rules, Niko and NPC data as JSON |
+| `data/` | Zone, rooms, scene, items, world facts, opening, rules, Niko, NPC and cast data as JSON |
 | `test/` | `node:test` suites |
 
 ## Tests
@@ -89,7 +98,19 @@ npm test          # tests only
 - A scripted three-beat fall opens a new game: each beat takes free text, the engine scans it
   deterministically for steer/brace intents (a brace costs the ability's Ether), the fall does not
   advance the world, and the landing is deterministic and lands inside the house. The landing is stored
-  as a high-importance `arrives` event seen only by its witnesses.
+  as a high-importance `arrives` event seen only by its witnesses. While he falls Niko is alone in the
+  open sky: nobody is visible, the narrator's place is "The sky" and the house below stays out of the
+  prompt until the landing.
+- A generated cast: each "Start new game" draws a seed and fills the role slots of `data/cast.json`
+  (the warner and the finder) with names and temperaments drawn without replacement through `rngFor`,
+  at one of the slot's spawn tiles. The slot carries its own agenda and the scene fact it reveals, so
+  the scene needs no change; the facts that name a character are reworded in the save (`fact_texts`).
+  The same seed always brings the same people. Niko, the street and the landing use that seed too.
+- The optional `cast` role writes each new character's personality and voice from their name and the goal
+  of their slot. The engine keeps only entries with a known id and a bounded length; anyone left out keeps
+  the pool temperament, and a failed or over-budget call changes nothing. The result lives in the save, so
+  with the role on, the same seed no longer promises the same personalities (they never steer the engine,
+  only the prompts).
 - A multi-zone world on one 2D grid (1 tile = 1 m): the hand-made 10x15 house, a 40x40 street with
   six buildings, and building interiors generated on first entry. Doors link zones; the entry tile is
   derived from the reciprocal door, so navigation stays coherent at every scale. Perception, collision
@@ -131,6 +152,9 @@ npm test          # tests only
   while the turn runs, and a `stage` delta reports the phase (`interpreting`, `resolving`, `narrating`,
   `checking`). The narrator is followed by deterministic checks and one continuity rewrite; a turn that
   fell back to offline narration is flagged `degraded`.
+- A `Models` tab (topbar tab or `F3`): one card per role with its model, reasoning flag and where each value comes
+  from (set here, `.env`, inherited from the narrator). It reads `GET /api/models`, saves with `POST /api/models`
+  and autocompletes from `GET /api/models/catalog`.
 - A `Debug` tab apart from the game view (topbar tab or `F2`): it reads `GET /api/debug` and shows the
   raw snapshot, seed, settings, entities, events with their witnesses, memories, the rolling summary,
   LLM calls and the cost per role, plus the prompts (system, retry and every request actually sent),

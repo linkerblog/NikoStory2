@@ -90,6 +90,13 @@ const MIGRATIONS: string[] = [
      data      TEXT NOT NULL DEFAULT '{}',
      CHECK ((holder_id IS NULL) <> (zone_id IS NULL))
    );`,
+  // Model choices made from the Models tab. A preference of the install, not of the save, so
+  // `clearSave` leaves it alone: a new game keeps the models the player picked.
+  `CREATE TABLE role_config (
+     role      TEXT PRIMARY KEY,
+     model     TEXT,
+     reasoning INTEGER
+   );`,
 ];
 
 export function openDb(path: string): Db {

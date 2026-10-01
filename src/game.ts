@@ -1,6 +1,7 @@
 import { clearSave, openDb, type Db } from "./db.js";
 import { Engine, type EngineServices } from "./engine.js";
-import { loadOpening, loadWorld, seed } from "./world.js";
+import { applyPersonalities, loadOpening, loadWorld, seed } from "./world.js";
+import { castBrief, generateCast, loadCast } from "./cast.js";
 import { ZoneStore, ensureWorld } from "./zones.js";
 import { loadMemoryRules, OfflineMemories, type MemoryRules } from "./memory.js";
 import { loadScene, loadStakesRules, type StakesRules } from "./stakes.js";
@@ -32,15 +33,33 @@ export function createGame(
   plantItems();
   const opening = loadOpening(dataDir, house);
   const world = loadWorld(dataDir);
-  const engine = new Engine(db, zones, servicesFor(db, memory, stakes, gameRules), gameRules, memory, stakes, scene, opening, world);
+  const cast = loadCast(dataDir, house, scene);
+  const services = servicesFor(db, memory, stakes, gameRules);
+  const engine = new Engine(db, zones, services, gameRules, memory, stakes, scene, opening, world);
   // Reset reuses the same engine: only the rows change, so every rule and role stays loaded.
-  // The zone store is cleared too, so generated buildings are rebuilt from scratch.
-  const reset = async (onDelta?: DeltaSink): Promise<void> => {
+  // The zone store is cleared too, so generated buildings are rebuilt from scratch. Given a `seed`, the
+  // new game is a new world: that seed becomes the save's seed and the NPCs are generated from it.
+  // Without one, the authored game restarts as it began.
+  const reset = async (onDelta?: DeltaSink, options: { seed?: number } = {}): Promise<void> => {
+    const fresh = options.seed;
+    const gameSeed = fresh ?? seedValue;
+    const generated = fresh === undefined ? undefined : generateCast(cast, fresh);
     clearSave(db);
-    seed(db, dataDir, seedValue);
+    seed(db, dataDir, gameSeed, generated);
     zones.clear();
-    ensureWorld(db, dataDir, seedValue, zones);
+    ensureWorld(db, dataDir, gameSeed, zones);
     plantItems();
+    // The save is already whole with the pool temperaments, so the model is asked after the seed: its call
+    // is logged in the new save (`clearSave` empties `llm_calls`) and a slow or failed call changes nothing.
+    if (generated && services.castwriter) {
+      onDelta?.({ kind: "stage", text: "casting" });
+      try {
+        const picks = await services.castwriter.write({ characters: castBrief(generated), world }, onDelta);
+        if (picks) applyPersonalities(db, picks);
+      } catch (e) {
+        console.warn("The cast call failed, keeping the generated temperaments:", (e as Error).message);
+      }
+    }
     await engine.start(onDelta);
   };
   return { db, engine, reset };

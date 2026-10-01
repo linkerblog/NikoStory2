@@ -20,6 +20,13 @@ implemented is listed in `README.md`.
 
 ## Architecture rules (do not break)
 
+- **A new game is a new cast.** `reset(onDelta, { seed })` in `src/game.ts` replaces the NPCs with a
+  cast generated from that seed (`src/cast.ts`, `data/cast.json`). The seed is drawn at the server's
+  edge and then lives in the save, so the cast replays from it. A role slot owns its agenda and the
+  scene fact it reveals. The optional `cast` role only picks each character's personality and voice;
+  the engine validates it and the pool temperament is the fallback. Never hard-code an NPC id outside `data/npcs.json` and the tests of it.
+- **The fall has no company.** While `phase` is `fall` nobody is perceptible and the narrator's place
+  is the sky; the house and its people come back with the landing.
 - **The engine is the only writer of state.** `src/engine.ts` validates every action and effect,
   advances the tick and commits changes. The interpreter only proposes typed effects; the narrator
   only proposes text.
@@ -44,10 +51,13 @@ implemented is listed in `README.md`.
 - **Secrets stay local.** `OPENROUTER_API_KEY` lives in `.env` (gitignored) and never reaches the
   client; the server listens on `127.0.0.1` only.
 - **Every LLM call is logged** to the `llm_calls` table with its real role (`interpreter`,
-  `narrator`, `architect`, `continuity`, `memory`, `npc`), tokens and, when OpenRouter returns it,
+  `narrator`, `architect`, `continuity`, `memory`, `npc`, `cast`), tokens and, when OpenRouter returns it,
   cost.
 - **Roles are configured, not hard-coded.** Each role has its own model, reasoning flag and idle
-  timeout (`<ROLE>_MODEL`/`<ROLE>_REASONING`/`<ROLE>_IDLE_MS`); the spend cap is the only global.
+  timeout (`<ROLE>_MODEL`/`<ROLE>_REASONING`/`<ROLE>_IDLE_MS`); the spend cap is the only global. The
+  Models tab overrides model and reasoning at runtime (`role_config`, resolved in `src/models.ts`:
+  tab, then `.env`, then the narrator's model); it is an install preference, so `clearSave` keeps it,
+  and the API key is never editable or readable from the browser.
   `post` uses an idle timeout that resets on every chunk, never a total timeout.
 
 ## Commands

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { getMeta, setMeta, type Db } from "./db.js";
+import type { GeneratedCast, NpcSeed, Personality } from "./cast.js";
 
 export interface Obj { id: string; type: string; name: string; x: number; y: number; blocks: boolean }
 export interface Room { id: string; name: string; x: number; y: number; w: number; h: number }
@@ -86,10 +87,26 @@ export function roomAt(zone: Zone, x: number, y: number): string {
   return r?.name ?? zone.name;
 }
 
-export function seed(db: Db, dataDir: string, seedValue: number): void {
+// Replaces the personality and voice of seeded NPCs with what the `cast` role wrote. It runs right after
+// `seed`, before the first narration, so no prompt ever sees the pool temperament it replaces. An id
+// that is not an NPC of this save is ignored.
+export function applyPersonalities(db: Db, picks: Record<string, Personality>): void {
+  const row = db.prepare("SELECT data FROM entities WHERE id = ? AND type = 'npc'");
+  const upd = db.prepare("UPDATE entities SET data = ? WHERE id = ?");
+  db.transaction(() => {
+    for (const [id, p] of Object.entries(picks)) {
+      const r = row.get(id) as { data: string } | undefined;
+      if (r) upd.run(JSON.stringify({ ...JSON.parse(r.data), personality: p.personality, voice: p.voice }), id);
+    }
+  })();
+}
+
+// Without a cast the authored NPCs of `data/npcs.json` are planted; with one, the generated people take
+// their place and the facts that name them are reworded (see `Engine.knownFacts`).
+export function seed(db: Db, dataDir: string, seedValue: number, cast?: GeneratedCast): void {
   if (getMeta(db, "seeded")) return;
   const niko = read<any>(`${dataDir}/niko.json`);
-  const npcs = read<any[]>(`${dataDir}/npcs.json`);
+  const npcs = cast?.npcs ?? read<NpcSeed[]>(`${dataDir}/npcs.json`);
   const ins = db.prepare(
     "INSERT INTO entities (id, type, name, zone_id, x, y, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
@@ -97,6 +114,7 @@ export function seed(db: Db, dataDir: string, seedValue: number): void {
     ins.run("niko", "player", niko.name, niko.start_zone, niko.x, niko.y, JSON.stringify(niko.data));
     for (const n of npcs) ins.run(n.id, "npc", n.name, niko.start_zone, n.x, n.y, JSON.stringify(n.data));
     setMeta(db, "seed", String(seedValue));
+    setMeta(db, "fact_texts", JSON.stringify(cast?.factTexts ?? {}));
     setMeta(db, "tick", "0");
     setMeta(db, "visible", "[]");
     setMeta(db, "phase", "fall");

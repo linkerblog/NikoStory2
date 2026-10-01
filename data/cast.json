@@ -1,0 +1,49 @@
+{
+  "names": [
+    "Rowan", "Sable", "Tamsin", "Odette", "Bram", "Lior", "Calla", "Dax",
+    "Elio", "Fenna", "Gideon", "Hana", "Isolde", "Joss", "Kestrel", "Lena",
+    "Mireille", "Orin", "Perrin", "Quill", "Rune", "Soren", "Thea", "Wren"
+  ],
+  "temperaments": [
+    { "personality": "stern and watchful", "voice": "Terse and level; says only what matters." },
+    { "personality": "warm and scatterbrained", "voice": "Rambles kindly, loses the thread, then laughs at it." },
+    { "personality": "dry and sarcastic", "voice": "Deadpan remarks; never raises the voice." },
+    { "personality": "shy and observant", "voice": "Soft-spoken, hesitates, trails off at the end of a sentence." },
+    { "personality": "bold and impatient", "voice": "Fast and loud; interrupts and pushes for an answer." },
+    { "personality": "gentle and dreamy", "voice": "Slow, lyrical phrasing that drifts into small tangents." },
+    { "personality": "suspicious and guarded", "voice": "Answers a question with a question and weighs every word." },
+    { "personality": "cheerful and nosy", "voice": "Bright and eager; asks many questions and shares what was overheard." },
+    { "personality": "gruff and protective", "voice": "Grumbles, then softens; short orders disguised as advice." },
+    { "personality": "calm and methodical", "voice": "Measured and precise; lists things in order." }
+  ],
+  "slots": [
+    {
+      "role": "warner",
+      "spawns": [{ "x": 6, "y": 2 }, { "x": 5, "y": 4 }, { "x": 7, "y": 5 }, { "x": 3, "y": 4 }],
+      "routine": { "type": "wander", "prob": 0.5 },
+      "agenda": {
+        "goal_id": "warn_niko", "kind": "approach", "target": "niko",
+        "want": "{name} came to warn Niko about something and will not leave until it is said.",
+        "reveals": "fact_marta_warning"
+      },
+      "fact": {
+        "id": "fact_marta_warning",
+        "text": "{name} saw a light fall from the sky and came to warn Niko that people will come looking for it."
+      }
+    },
+    {
+      "role": "finder",
+      "spawns": [{ "x": 3, "y": 8 }, { "x": 5, "y": 8 }, { "x": 6, "y": 12 }, { "x": 2, "y": 12 }],
+      "routine": { "type": "wander", "prob": 0.5 },
+      "agenda": {
+        "goal_id": "show_letter", "kind": "visit", "target": "table",
+        "want": "{name} wants to show Niko the letter found on the kitchen table.",
+        "reveals": "fact_ivy_letter"
+      },
+      "fact": {
+        "id": "fact_ivy_letter",
+        "text": "{name} found a letter addressed to Niko on the kitchen table."
+      }
+    }
+  ]
+}

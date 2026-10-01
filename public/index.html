@@ -149,11 +149,11 @@
 
   /* Debug view: a tab apart from the game, sharing the same shell. */
   .head-btn { margin-left: auto; padding: 0 var(--s2); font-size: 12px; }
-  #panel-debug { display: none; flex: 1 1 auto; min-height: 0; }
-  body[data-view="debug"] #panel-debug { display: flex; }
-  body[data-view="debug"] .main,
-  body[data-view="debug"] #panel-actions,
-  body[data-view="debug"] .cmdline { display: none; }
+  #panel-debug, #panel-models { display: none; flex: 1 1 auto; min-height: 0; }
+  body[data-view="debug"] #panel-debug, body[data-view="models"] #panel-models { display: flex; }
+  body[data-view="debug"] .main, body[data-view="models"] .main,
+  body[data-view="debug"] #panel-actions, body[data-view="models"] #panel-actions,
+  body[data-view="debug"] .cmdline, body[data-view="models"] .cmdline { display: none; }
   .subtabs { display: flex; gap: var(--s1); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); }
   .subtabs .tab { flex: none; padding: var(--s1) var(--s3); font-size: 13px; }
   .debug-body { font-size: 13px; line-height: 1.5; }
@@ -176,6 +176,27 @@
   }
   .debug-body textarea:focus { outline: none; border-color: var(--focus); }
   .prompt-actions { display: flex; gap: var(--s2); align-items: center; margin-bottom: var(--s3); }
+
+  /* Models view: one card per role, sharing the debug body's type scale. */
+  .models-note { color: var(--fg-dim); margin: 0 0 var(--s3); }
+  .role-card {
+    display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: var(--s2) var(--s3);
+    padding: var(--s3); margin: 0 0 var(--s2); background: var(--bg-raised);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .role-card h3 { grid-column: 1 / -1; margin: 0; display: flex; gap: var(--s2); align-items: baseline; flex-wrap: wrap; }
+  .role-card .info { grid-column: 1 / -1; color: var(--fg-dim); }
+  .role-card label { display: flex; flex-direction: column; gap: var(--s1); color: var(--fg-dim); font-size: 12px; min-width: 0; }
+  .role-card input, .role-card select {
+    background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: var(--s1) var(--s2); font: inherit; font-size: 13px; min-width: 0;
+  }
+  .role-card input:focus, .role-card select:focus { outline: none; border-color: var(--focus); }
+  .role-card .meta { grid-column: 1 / -1; color: var(--fg-dim); font-size: 12px; min-height: 1.5em; }
+  .badge { font-weight: 400; font-size: 12px; color: var(--fg-dim); }
+  .badge.ui { color: var(--accent); }
+  .badge.env { color: var(--accent-2); }
+  @media (max-width: 699px) { .role-card { grid-template-columns: 1fr; } }
 
   /* Overlays, modal, toast */
   .overlay {
@@ -233,6 +254,7 @@
     <span class="brand">NikoStory2</span>
     <nav class="views" id="views" role="tablist" aria-label="Views">
       <button class="tab" type="button" role="tab" data-view="game" aria-selected="true">Game</button>
+      <button class="tab" type="button" role="tab" data-view="models" aria-selected="false">Models</button>
       <button class="tab" type="button" role="tab" data-view="debug" aria-selected="false">Debug</button>
     </nav>
     <span class="clock" id="clock">T:0000</span>
@@ -266,6 +288,12 @@
     </section>
   </div>
 
+  <section class="panel" id="panel-models" aria-label="Models">
+    <header class="panel-head"><span>[ MODELS ]</span>
+      <button class="btn head-btn" id="models-refresh" type="button">Refresh</button></header>
+    <div class="body debug-body" id="models-body"></div>
+  </section>
+
   <section class="panel" id="panel-debug" aria-label="Debug">
     <header class="panel-head"><span>[ DEBUG ]</span>
       <button class="btn head-btn" id="debug-refresh" type="button">Refresh</button></header>
@@ -281,6 +309,7 @@
     <button class="tab" type="button" role="tab" data-tab="map">Map</button>
     <button class="tab" type="button" role="tab" data-tab="status">Status</button>
     <button class="tab" type="button" role="tab" data-tab="actions">Actions</button>
+    <button class="tab" type="button" role="tab" data-tab="models">Models</button>
     <button class="tab" type="button" role="tab" data-tab="debug">Debug</button>
   </nav>
 
@@ -304,13 +333,14 @@
     <dl>
       <dt><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd> / <kbd>WASD</kbd></dt><dd>Move Niko one tile</dd>
       <dt><kbd>Space</kbd></dt><dd>Wait one turn</dd>
-      <dt>free text</dt><dd>Type anything in the Actions box or the command line: go north, talk to Marta, wait, examine the crate, take the letter, read it. The interpreter reads it and the engine decides.</dd>
+      <dt>free text</dt><dd>Type anything in the Actions box or the command line: go north, talk to someone nearby, wait, examine the crate, take the letter, read it. The interpreter reads it and the engine decides.</dd>
       <dt><kbd>/</kbd></dt><dd>Focus the command line</dd>
       <dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd> in the command line</dt><dd>Browse command history</dd>
       <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Cycle focus between panels</dd>
       <dt><kbd>g</kbd> then <kbd>m</kbd> <kbd>l</kbd> <kbd>s</kbd> <kbd>i</kbd></dt><dd>Jump to Map / Log / Status / Inventory</dd>
       <dt><kbd>?</kbd> or <kbd>F1</kbd></dt><dd>Toggle this help</dd>
       <dt><kbd>F2</kbd></dt><dd>Toggle the debug tab</dd>
+      <dt><kbd>F3</kbd></dt><dd>Toggle the models tab</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close overlay, clear focus</dd>
     </dl>
     <div class="actions"><button class="btn" id="help-close" type="button">Close</button></div>
@@ -320,7 +350,7 @@
 <div class="overlay" id="confirm" role="dialog" aria-modal="true" aria-label="Confirm reset" hidden>
   <div class="modal">
     <h2>[ RESET ]</h2>
-    <p>Start a new game? All progress in this save will be lost.</p>
+    <p>Start a new game? All progress in this save will be lost, and every character is replaced by a new one.</p>
     <div class="actions">
       <button class="btn" id="confirm-cancel" type="button">Cancel</button>
       <button class="btn" id="confirm-ok" type="button">Start new game</button>
@@ -616,7 +646,7 @@ function renderActions() {
   row.className = "fall-row";
   row.innerHTML = `<input id="free-input" type="text" maxlength="500" spellcheck="false"
       placeholder="${fall ? "e.g. spread my arms and steer toward the rooftops"
-                        : "Type what Niko does: go north, open the fridge, talk to Marta\u2026"}">
+                        : "Type what Niko does: go north, open the fridge, talk to whoever is nearby\u2026"}">
     <button class="btn" id="free-go" type="button">Do it</button>`;
   el.appendChild(row);
   const inp = $("free-input");
@@ -674,7 +704,7 @@ function setTab(tab) {
 function syncTabs() {
   const view = document.body.dataset.view || "game";
   document.querySelectorAll("#tabbar .tab").forEach((b) => {
-    const on = view === "debug" ? b.dataset.tab === "debug" : b.dataset.tab === document.body.dataset.tab;
+    const on = view !== "game" ? b.dataset.tab === view : b.dataset.tab === document.body.dataset.tab;
     b.setAttribute("aria-selected", String(on));
   });
 }
@@ -693,6 +723,7 @@ function setView(view) {
   document.querySelectorAll("#views .tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.view === view)));
   syncTabs();
   if (view === "debug") loadDebug();
+  if (view === "models") loadModels();
 }
 function renderDebug() {
   setDebugTab(debugTab, false);
@@ -801,6 +832,106 @@ async function savePrompts(reset) {
   } catch { status.textContent = "Network error."; }
 }
 
+// ---- Models view: the model and reasoning flag of every role, edited here and applied live. ----
+let M = null, catalog = new Map(), catalogState = "idle";
+const SOURCE = { ui: "set here", env: ".env", narrator: "inherits narrator", none: "not set", default: "default" };
+const fmtCtx = (n) => (n >= 1000 ? Math.round(n / 1000) + "k" : String(n));
+const reasoningValue = (o) => (o?.reasoning === null || o?.reasoning === undefined ? "" : o.reasoning ? "1" : "0");
+
+async function loadModels() {
+  try { M = await (await fetch("/api/models")).json(); renderModels(); }
+  catch { $("models-body").innerHTML = '<p class="dimline">Could not load the models.</p>'; return; }
+  loadCatalog();
+}
+// The OpenRouter list only powers the autocomplete and the price hint; the tab works without it.
+async function loadCatalog() {
+  if (catalogState !== "idle") return;
+  catalogState = "loading";
+  try {
+    const r = await (await fetch("/api/models/catalog")).json();
+    if (!r.ok) throw new Error(r.error);
+    catalog = new Map(r.models.map((m) => [m.id, m]));
+    catalogState = "ready";
+  } catch { catalogState = "idle"; return; } // retried the next time the tab opens
+  if (document.body.dataset.view !== "models") return;
+  // Re-rendering would drop what the player is typing, so only the datalist and the hints are refreshed.
+  $("model-catalog").innerHTML = [...catalog.values()].map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("");
+  refreshHints();
+}
+
+function renderModels() {
+  if (!M) return;
+  const mode = M.live ? '<span class="acc">LLM</span>'
+    : `<span class="warn">offline</span> — ${M.keyPresent ? "choose a narrator model to switch the LLM on" : "add OPENROUTER_API_KEY to .env, then choose a narrator model"}`;
+  const out = [`<div class="kv"><span>mode</span><span>${mode}</span>
+    <span>spend</span><span>$${M.spentUsd.toFixed(4)} of $${M.spendCapUsd} cap</span></div>`];
+  out.push(`<p class="models-note">Each role can use its own OpenRouter model. A role left empty uses the narrator's model.
+    Changes apply to the next call, with no restart and no new game. Reasoning raises cost and latency.</p>`);
+  out.push(`<datalist id="model-catalog">${[...catalog.values()].map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</datalist>`);
+  for (const r of M.roles) {
+    const rs = reasoningValue(r.override);
+    const fallback = r.baseReasoning ? "on" : "off";
+    out.push(`<div class="role-card" data-role="${r.role}">
+      <h3>${esc(r.role)}
+        <span class="badge ${r.modelSource}">model: ${SOURCE[r.modelSource]}</span>
+        <span class="badge ${r.reasoningSource}">reasoning: ${SOURCE[r.reasoningSource]}</span></h3>
+      <div class="info">${esc(r.info)}</div>
+      <label>model <input type="text" class="m-model" list="model-catalog" value="${esc(r.override?.model ?? "")}"
+        placeholder="${r.role === "narrator" ? "vendor/model-name" : "empty = the narrator's model"}"
+        spellcheck="false" autocomplete="off"></label>
+      <label>reasoning <select class="m-reasoning">
+        <option value=""${rs === "" ? " selected" : ""}>default (${fallback})</option>
+        <option value="1"${rs === "1" ? " selected" : ""}>on</option>
+        <option value="0"${rs === "0" ? " selected" : ""}>off</option></select></label>
+      <div class="meta"></div></div>`);
+  }
+  out.push(`<div class="prompt-actions"><button class="btn" id="models-save" type="button">Save models</button>
+    <button class="btn" id="models-clear" type="button">Clear all choices</button>
+    <span id="models-status" class="dimline"></span></div>`);
+  $("models-body").innerHTML = out.join("");
+  $("models-save").onclick = () => saveModels(false);
+  $("models-clear").onclick = () => saveModels(true);
+  $("models-body").querySelectorAll(".m-model, .m-reasoning").forEach((i) => i.addEventListener("input", refreshHints));
+  refreshHints();
+}
+// Under each role: the model it will really use, its price when the catalog knows it, and what is unsaved.
+function refreshHints() {
+  if (!M) return;
+  const typedModel = (role) => $("models-body").querySelector(`[data-role="${role}"] .m-model`).value.trim();
+  const envModel = (role) => M.roles.find((r) => r.role === role).envModel || "";
+  for (const card of $("models-body").querySelectorAll(".role-card")) {
+    const role = card.dataset.role, r = M.roles.find((x) => x.role === role);
+    // Mirrors the server: the role's own choice, then its .env value, then the narrator's.
+    const effective = typedModel(role) || envModel(role) || (role === "narrator" ? "" : typedModel("narrator") || envModel("narrator"));
+    const dirty = typedModel(role) !== (r.override?.model ?? "") || card.querySelector(".m-reasoning").value !== reasoningValue(r.override);
+    const m = catalog.get(effective);
+    const meta = card.querySelector(".meta");
+    if (!effective) { meta.innerHTML = 'no model: this role runs offline' + (dirty ? ' <span class="warn">unsaved</span>' : ""); continue; }
+    const price = m ? ` · ${m.context ? fmtCtx(m.context) + " ctx · " : ""}$${m.promptUsd ?? "?"} / $${m.completionUsd ?? "?"} per 1M tokens in / out` : "";
+    const unknown = catalogState === "ready" && !m ? ' · <span class="warn">not in the OpenRouter list</span>' : "";
+    meta.innerHTML = `uses ${esc(effective)}${esc(price)}${unknown}${dirty ? ' · <span class="warn">unsaved</span>' : ""}`;
+  }
+}
+async function saveModels(clear) {
+  const status = $("models-status");
+  const roles = {};
+  for (const c of $("models-body").querySelectorAll(".role-card")) {
+    const rs = c.querySelector(".m-reasoning").value;
+    roles[c.dataset.role] = clear ? { model: null, reasoning: null }
+      : { model: c.querySelector(".m-model").value.trim() || null, reasoning: rs === "" ? null : rs === "1" };
+  }
+  status.textContent = "saving…";
+  try {
+    const r = await (await fetch("/api/models", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roles }),
+    })).json();
+    if (!r.ok) { status.textContent = r.error || "Could not save."; return; }
+    M = r;
+    toast(clear ? "Model choices cleared." : "Models saved.");
+    renderModels();
+  } catch { status.textContent = "Network error."; }
+}
+
 function openHelp() { $("help").hidden = false; $("help-close").focus(); }
 function closeHelp() { $("help").hidden = true; }
 function openConfirm() { $("confirm").hidden = false; $("confirm-ok").focus(); }
@@ -814,10 +945,11 @@ $("views").addEventListener("click", (e) => {
 $("tabbar").addEventListener("click", (e) => {
   const b = e.target.closest(".tab");
   if (!b) return;
-  if (b.dataset.tab === "debug") setView("debug");
+  if (b.dataset.tab === "debug" || b.dataset.tab === "models") setView(b.dataset.tab);
   else { setView("game"); setTab(b.dataset.tab); }
 });
 $("debug-refresh").onclick = loadDebug;
+$("models-refresh").onclick = loadModels;
 $("debug-tabs").addEventListener("click", (e) => {
   const b = e.target.closest(".tab");
   if (b) setDebugTab(b.dataset.dtab);
@@ -852,12 +984,16 @@ addEventListener("keydown", (e) => {
     else if (e.key === "Enter") { e.preventDefault(); closeConfirm(); resetGame(); }
     return;
   }
-  // F2 toggles the debug tab. While it is open, only leaving it is handled here.
-  if (document.body.dataset.view === "debug") {
-    if (e.key === "Escape" || e.key === "F2") { e.preventDefault(); setView("game"); }
+  // F2 toggles the debug tab and F3 the models tab. While one is open, only leaving it (or hopping to the other) is handled here.
+  const view = document.body.dataset.view;
+  if (view === "debug" || view === "models") {
+    const own = view === "debug" ? "F2" : "F3";
+    if (e.key === "Escape" || e.key === own) { e.preventDefault(); setView("game"); }
+    else if (e.key === "F2" || e.key === "F3") { e.preventDefault(); setView(e.key === "F2" ? "debug" : "models"); }
     return;
   }
   if (e.key === "F2") { e.preventDefault(); setView("debug"); return; }
+  if (e.key === "F3") { e.preventDefault(); setView("models"); return; }
   finishReveal();
 
   if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {
